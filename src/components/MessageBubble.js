@@ -9,7 +9,7 @@ const BubbleContainer = styled.div`
   word-wrap: break-word;
   margin-bottom: 8px;
   
-  ${props => props.isSelf ? `
+  ${props => props.$isSelf ? `
     align-self: flex-end;
     background-color: #dcf8c6;
     border-bottom-right-radius: 5px;
@@ -44,7 +44,7 @@ const MessageBubble = ({ message, isSelf }) => {
   };
 
   return (
-    <BubbleContainer isSelf={isSelf}>
+    <BubbleContainer $isSelf={isSelf}>
       <MessageText>{message.text}</MessageText>
       <MessageTime>{formatTime(message.timestamp)}</MessageTime>
     </BubbleContainer>

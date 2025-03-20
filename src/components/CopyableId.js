@@ -47,7 +47,7 @@ const CopyNotification = styled.div`
   padding: 5px 10px;
   border-radius: 4px;
   font-size: 12px;
-  opacity: ${props => props.visible ? 1 : 0};
+  opacity: ${props => props.$visible ? 1 : 0};
   transition: opacity 0.3s ease;
 `;
 
@@ -63,7 +63,7 @@ const CopyableId = ({ id, onCopy }) => {
   
   return (
     <Container style={{ position: 'relative' }}>
-      <CopyNotification visible={showCopied}>已复制到剪贴板!</CopyNotification>
+      <CopyNotification $visible={showCopied}>已复制到剪贴板!</CopyNotification>
       <IdText>{id}</IdText>
       <CopyButton onClick={handleCopy} title="复制到剪贴板">
         <FiCopy />

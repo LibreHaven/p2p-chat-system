@@ -17,7 +17,7 @@ const Container = styled.div`
   padding: 10px;
   border-radius: 4px;
   background-color: ${props => {
-    switch (props.status) {
+    switch (props.$status) {
       case 'connected': return '#e6f7e6';
       case 'connecting': return '#fff8e6';
       case 'failed': return '#ffebee';
@@ -34,7 +34,7 @@ const IconWrapper = styled.div`
   height: 24px;
   margin-right: 10px;
   color: ${props => {
-    switch (props.status) {
+    switch (props.$status) {
       case 'connected': return '#2ecc71';
       case 'connecting': return '#f39c12';
       case 'failed': return '#e74c3c';
@@ -42,7 +42,7 @@ const IconWrapper = styled.div`
     }
   }};
   
-  ${props => props.status === 'connecting' && css`
+  ${props => props.$status === 'connecting' && css`
     animation: ${rotate} 1.5s linear infinite;
   `}
 `;
@@ -50,7 +50,7 @@ const IconWrapper = styled.div`
 const StatusText = styled.span`
   font-size: 14px;
   color: ${props => {
-    switch (props.status) {
+    switch (props.$status) {
       case 'connected': return '#27ae60';
       case 'connecting': return '#d35400';
       case 'failed': return '#c0392b';
@@ -89,11 +89,11 @@ const StatusIndicator = ({ status }) => {
   };
 
   return (
-    <Container status={status}>
-      <IconWrapper status={status}>
+    <Container $status={status}>
+      <IconWrapper $status={status}>
         {renderIcon()}
       </IconWrapper>
-      <StatusText status={status}>
+      <StatusText $status={status}>
         {getStatusText()}
       </StatusText>
     </Container>
