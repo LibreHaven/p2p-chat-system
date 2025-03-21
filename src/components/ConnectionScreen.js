@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import styled from 'styled-components';
 import { FiLoader, FiCheck, FiX } from 'react-icons/fi';
 import { encryptionService } from '../services/encryptionService';
@@ -149,6 +149,45 @@ const ConnectionScreen = ({
   const [toastMessage, setToastMessage] = useState('');
   const [pendingConnection, setPendingConnection] = useState(null);
   const [waitingForAcceptance, setWaitingForAcceptance] = useState(false);
+  const [connectionMode, setConnectionMode] = useState('create'); // 'create' or 'connect'
+  const [isConnectionInitiator, setIsConnectionInitiator] = useState(false); // 标记是否为连接发起方
+  const [encryptionReady, setEncryptionReady] = useState(false); // 标记加密是否准备就绪
+  const [hasHandledEncryptionReady, setHasHandledEncryptionReady] = useState(false); // 标记是否已处理过加密就绪
+  const reconnectTimeoutRef = useRef(null); // 用于重连的定时器引用
+  const dataListenerRef = useRef(null); // 用于跟踪数据监听器
+  const encryptionReadyConfirmationTimeoutRef = useRef(null); // 用于重试发送加密就绪确认的定时器
+  const activeConnectionRef = useRef(null); // 用于跟踪活动连接
+
+  // 验证自定义ID
+  const validateCustomId = (id) => {
+    // ID必须是3-12位的字母、数字、下划线或连字符
+    const idRegex = /^[a-zA-Z0-9_-]{3,12}$/;
+    const isValid = idRegex.test(id);
+    
+    if (!isValid) {
+      setCustomIdError('ID必须是3-12位的字母、数字、下划线或连字符');
+    } else {
+      setCustomIdError('');
+    }
+    
+    return isValid;
+  };
+
+  // 验证目标ID
+  const validateTargetId = (id) => {
+    if (!id) {
+      setTargetIdError('请输入目标ID');
+      return false;
+    }
+    
+    if (id === peerId) {
+      setTargetIdError('不能连接到自己');
+      return false;
+    }
+    
+    setTargetIdError('');
+    return true;
+  };
 
   // 显示提示消息
   const displayToast = (message) => {
@@ -159,68 +198,77 @@ const ConnectionScreen = ({
 
   // 初始化 PeerJS 连接
   useEffect(() => {
-    // 组件卸载时清理
+    // 清除会话存储中的密钥
+    sessionStorage.removeItem('privateKey');
+    sessionStorage.removeItem('sharedSecret');
+    sessionStorage.removeItem('encryptionReady');
+    sessionStorage.removeItem('isInitiator');
+    
+    // 清除消息历史
+    setMessages([]);
+    
     return () => {
+      // 组件卸载时清理
       if (peer) {
         peer.destroy();
       }
+      
       if (connectionTimeout) {
         clearTimeout(connectionTimeout);
+      }
+      
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      
+      if (encryptionReadyConfirmationTimeoutRef.current) {
+        clearTimeout(encryptionReadyConfirmationTimeoutRef.current);
       }
     };
   }, []);
 
   // 创建 Peer 连接
   const createPeerConnection = () => {
-    if (!peerId || !validateCustomId(peerId)) {
+    if (!peerId) {
+      setCustomIdError('请输入ID');
       return;
     }
-
-    // 清除旧的连接
-    if (peer) {
-      peer.destroy();
+    
+    if (!validateCustomId(peerId)) {
+      return;
     }
     
     setConnectionStatus('connecting');
     
-    // 初始化新的 Peer 连接
+    // 初始化 Peer 连接
     const newPeer = peerService.initializePeer(peerId);
     setPeer(newPeer);
     
-    // 设置连接监听器
+    // 设置 Peer 连接监听器
     peerService.setupConnectionListeners(newPeer, {
       onOpen: (id) => {
         console.log('成功创建 Peer 连接，ID:', id);
-        setConnectionStatus('disconnected');
+        setConnectionStatus('ready');
         setIsPeerCreated(true);
-        displayToast(`Peer 连接已创建，您的 ID: ${id}`);
+        displayToast(`Peer 连接已创建，ID: ${id}`);
       },
       onError: (err) => {
         console.error('Peer 连接错误:', err);
         
-        // 处理 ID 已被占用的情况
         if (err.type === 'unavailable-id') {
-          setCustomIdError('此 ID 已被占用，请尝试其他 ID');
+          setCustomIdError('此ID已被占用，请尝试其他ID');
           setConnectionStatus('disconnected');
-          setIsPeerCreated(false);
         } else {
-          setErrorMessage(`Peer 连接错误: ${err.message}`);
           setConnectionStatus('failed');
-          setScreen('error');
+          displayToast('连接失败，请重试');
         }
-      },
-      onDisconnected: () => {
-        console.log('Peer 连接已断开');
-        setConnectionStatus('disconnected');
-        setIsPeerCreated(false);
-      },
-      onClose: () => {
-        console.log('Peer 连接已关闭');
-        setConnectionStatus('disconnected');
-        setIsPeerCreated(false);
       },
       onConnection: (conn) => {
         console.log('收到来自对方的连接请求');
+        
+        // 设置为接收方角色
+        setIsConnectionInitiator(false);
+        sessionStorage.setItem('isInitiator', 'false');
         
         // 设置数据连接监听器，以便在接受前就能接收消息
         peerService.setupDataConnectionListeners(conn, {
@@ -230,12 +278,14 @@ const ConnectionScreen = ({
           onClose: () => {
             console.log('连接已关闭');
             setShowConnectionRequest(false);
-            setConnectionStatus('disconnected');
+            setIncomingConnection(null);
+            setIncomingPeerId('');
           },
           onError: (err) => {
-            console.error('连接错误:', err);
+            console.error('数据连接错误:', err);
             setShowConnectionRequest(false);
-            setErrorMessage(`连接错误: ${err.message}`);
+            setIncomingConnection(null);
+            setIncomingPeerId('');
           }
         });
         
@@ -264,376 +314,472 @@ const ConnectionScreen = ({
       
       setConnectionStatus('connected');
       setConnection(conn);
-      setScreen('chat');
+      
+      // 保存活动连接引用
+      activeConnectionRef.current = conn;
       
       // 初始化加密
-      initializeEncryption(conn);
+      initializeEncryption();
+      
+      // 进入聊天界面
+      setScreen('chat');
     } catch (error) {
       console.error('发送接受消息时出错:', error);
-      setErrorMessage(`发送接受消息时出错: ${error.message}`);
-      setConnectionStatus('failed');
-      setScreen('error');
+      displayToast('连接失败，请重试');
     }
   };
 
-  // 接受连接请求
-  const acceptConnectionRequest = () => {
+  // 拒绝传入的连接请求
+  const rejectIncomingConnection = () => {
     if (incomingConnection) {
-      setShowConnectionRequest(false);
-      handleIncomingConnection(incomingConnection);
+      try {
+        incomingConnection.send({
+          type: 'connection-rejected'
+        });
+        incomingConnection.close();
+      } catch (error) {
+        console.error('发送拒绝消息时出错:', error);
+      }
     }
-  };
-
-  // 拒绝连接请求
-  const rejectConnectionRequest = () => {
-    if (incomingConnection) {
-      incomingConnection.close();
-      setShowConnectionRequest(false);
-      setIncomingConnection(null);
-      setIncomingPeerId('');
-    }
-  };
-
-  // 处理接收到的数据
-  const handleReceivedData = (data, sourceConn = null) => {
-    console.log('收到数据:', data);
     
-    try {
-      // 检查是否是连接接受消息
-      if (data.type === 'connection-accepted') {
-        console.log('对方已接受连接请求');
-        setWaitingForAcceptance(false);
-        
-        // 使用当前连接或者pendingConnection
-        const activeConn = sourceConn || pendingConnection;
-        
-        if (activeConn) {
-          console.log('使用活动连接进入聊天界面');
-          setConnectionStatus('connected');
-          setConnection(activeConn);
-          setScreen('chat');
-          
-          // 初始化加密
-          initializeEncryption(activeConn);
-        } else {
-          console.error('没有可用的连接');
-        }
-        return;
-      }
-      
-      // 检查是否是加密握手消息
-      if (data.type === 'encryption-key') {
-        // 处理加密密钥交换
-        handleEncryptionKeyExchange(data);
-        return;
-      }
-      
-      // 检查是否是加密消息
-      if (data.type === 'encrypted-message' && data.encrypted) {
-        const sharedSecret = sessionStorage.getItem('sharedSecret');
-        if (!sharedSecret) {
-          console.error('共享密钥不存在，无法解密消息');
-          return;
-        }
-        
-        // 解密消息
-        const decryptedData = encryptionService.decrypt(data.encrypted, sharedSecret);
-        if (!decryptedData) {
-          console.error('消息解密失败');
-          return;
-        }
-        
-        // 反序列化消息
-        const message = messageService.deserializeMessage(decryptedData);
-        
-        if (message) {
-          setMessages(prevMessages => [...prevMessages, message]);
-        }
-        return;
-      }
-      
-      // 处理旧版本的消息格式（向后兼容）
-      if (data.encrypted) {
-        const sharedSecret = sessionStorage.getItem('sharedSecret');
-        if (!sharedSecret) {
-          console.error('共享密钥不存在，无法解密消息');
-          return;
-        }
-        
-        // 尝试解密旧格式消息
-        try {
-          const decryptedData = encryptionService.decrypt(
-            { iv: data.encrypted.iv || '', ciphertext: data.encrypted.toString() },
-            sharedSecret
-          );
-          
-          if (decryptedData) {
-            const message = messageService.deserializeMessage(decryptedData);
-            if (message) {
-              setMessages(prevMessages => [...prevMessages, message]);
-            }
-          }
-        } catch (e) {
-          console.error('旧格式消息解密失败:', e);
-        }
-      }
-    } catch (error) {
-      console.error('处理接收数据时出错:', error);
-    }
+    setShowConnectionRequest(false);
+    setIncomingConnection(null);
+    setIncomingPeerId('');
   };
 
-  // 处理加密密钥交换
-  const handleEncryptionKeyExchange = (data) => {
-    console.log('收到加密密钥交换请求');
+  // 连接到目标 Peer
+  const connectToPeer = () => {
+    if (!targetId || !validateTargetId(targetId)) {
+      return;
+    }
     
-    try {
-      // 获取存储的私钥
-      const privateKey = JSON.parse(sessionStorage.getItem('privateKey'));
-      
-      if (!privateKey || !data.publicKey) {
-        console.error('密钥交换失败: 缺少必要的密钥');
-        return;
-      }
-      
-      // 使用我们的私钥和对方的公钥派生共享密钥
-      const sharedSecret = encryptionService.handleKeyExchange(
-        CryptoJS.enc.Hex.parse(privateKey),
-        data.publicKey
-      );
-      
-      // 存储共享密钥用于后续消息加密
-      sessionStorage.setItem('sharedSecret', sharedSecret);
-      
-      console.log('密钥交换成功，已生成共享密钥');
-    } catch (error) {
-      console.error('处理密钥交换时出错:', error);
-    }
-  };
-
-  // 初始化加密
-  const initializeEncryption = (conn) => {
-    console.log('初始化加密');
-    
-    try {
-      // 生成新的密钥对
-      const keyPair = encryptionService.generateKeyPair();
-      
-      // 存储私钥用于后续密钥交换
-      sessionStorage.setItem('privateKey', JSON.stringify(keyPair.privateKey.toString()));
-      
-      // 创建密钥交换消息
-      const keyExchangeMessage = {
-        type: 'encryption-key',
-        publicKey: keyPair.publicKey
-      };
-      
-      // 发送公钥给对方
-      conn.send(keyExchangeMessage);
-      
-      console.log('已发送公钥进行密钥交换');
-    } catch (error) {
-      console.error('初始化加密时出错:', error);
-    }
-  };
-
-  // 请求连接到对方 Peer
-  const requestConnection = () => {
-    if (!peer || !targetId || !validateTargetId(targetId)) {
+    if (!peer || !isPeerCreated) {
+      setTargetIdError('请先创建自己的 Peer 连接');
       return;
     }
     
     setConnectionStatus('connecting');
     setWaitingForAcceptance(true);
     
-    // 设置连接超时
-    const timeout = setTimeout(() => {
-      if (connectionStatus === 'connecting') {
-        setErrorMessage('连接超时，对方可能不在线或 ID 不存在');
-        setConnectionStatus('failed');
-        setScreen('error');
-        setWaitingForAcceptance(false);
-      }
-    }, 30000); // 30秒超时
+    // 设置为发起方角色
+    setIsConnectionInitiator(true);
+    sessionStorage.setItem('isInitiator', 'true');
     
-    setConnectionTimeout(timeout);
+    // 连接到目标 Peer
+    const conn = peerService.connectToPeer(peer, targetId);
+    setPendingConnection(conn);
+    
+    // 保存活动连接引用
+    activeConnectionRef.current = conn;
+    
+    // 保存数据监听器引用，以便在清理时使用
+    const handleData = (data) => {
+      handleReceivedData(data, conn);
+    };
+    dataListenerRef.current = handleData;
+    
+    // 设置数据连接监听器
+    peerService.setupDataConnectionListeners(conn, {
+      onOpen: () => {
+        console.log('成功连接到对方，等待对方接受请求');
+        
+        // 设置连接超时
+        const timeout = setTimeout(() => {
+          if (connectionStatus !== 'connected') {
+            console.log('连接请求超时');
+            setWaitingForAcceptance(false);
+            setConnectionStatus('failed');
+            conn.close();
+            displayToast('连接请求超时，请稍后再试');
+          }
+        }, 30000); // 30秒超时
+        
+        setConnectionTimeout(timeout);
+      },
+      onData: handleData,
+      onClose: () => {
+        console.log('连接已关闭');
+        
+        if (connectionTimeout) {
+          clearTimeout(connectionTimeout);
+        }
+        
+        if (connectionStatus !== 'connected') {
+          setWaitingForAcceptance(false);
+          setConnectionStatus('disconnected');
+          displayToast('连接已关闭');
+        }
+      },
+      onError: (err) => {
+        console.error('连接错误:', err);
+        
+        if (connectionTimeout) {
+          clearTimeout(connectionTimeout);
+        }
+        
+        setWaitingForAcceptance(false);
+        setConnectionStatus('failed');
+        displayToast('连接失败，请重试');
+      }
+    });
+  };
+
+  // 生成随机ID
+  const generateRandomId = () => {
+    const randomId = peerService.generateRandomId();
+    setPeerId(randomId);
+  };
+
+  // 处理接收到的数据
+  const handleReceivedData = (data, sourceConn) => {
+    try {
+      console.log('收到数据:', data);
+      
+      // 处理连接接受消息
+      if (data.type === 'connection-accepted') {
+        console.log('对方已接受连接请求');
+        
+        if (connectionTimeout) {
+          clearTimeout(connectionTimeout);
+        }
+        
+        setWaitingForAcceptance(false);
+        setConnectionStatus('connected');
+        
+        // 保存连接
+        setConnection(sourceConn || pendingConnection);
+        
+        // 保存活动连接引用
+        activeConnectionRef.current = sourceConn || pendingConnection;
+        
+        console.log('使用活动连接进入聊天界面');
+        
+        // 初始化加密
+        initializeEncryption();
+        
+        // 进入聊天界面
+        setScreen('chat');
+      }
+      
+      // 处理连接拒绝消息
+      else if (data.type === 'connection-rejected') {
+        console.log('对方拒绝了连接请求');
+        
+        if (connectionTimeout) {
+          clearTimeout(connectionTimeout);
+        }
+        
+        setWaitingForAcceptance(false);
+        setConnectionStatus('rejected');
+        displayToast('对方拒绝了连接请求');
+        
+        if (sourceConn) {
+          sourceConn.close();
+        } else if (pendingConnection) {
+          pendingConnection.close();
+        }
+      }
+      
+      // 处理加密密钥交换消息
+      else if (data.type === 'encryption-key') {
+        console.log('收到加密密钥交换请求');
+        
+        // 获取私钥
+        const privateKeyHex = sessionStorage.getItem('privateKey');
+        if (!privateKeyHex) {
+          console.error('私钥不存在，无法完成密钥交换');
+          return;
+        }
+        
+        // 将十六进制字符串转换回 WordArray
+        const privateKey = CryptoJS.enc.Hex.parse(privateKeyHex);
+        
+        console.log('处理密钥交换, 私钥长度:', privateKeyHex.length, '接收到的公钥长度:', data.publicKey.length);
+        
+        // 处理密钥交换
+        const sharedSecret = encryptionService.handleKeyExchange(
+          privateKey,
+          data.publicKey,
+          sessionStorage.getItem('isInitiator') === 'true'
+        );
+        
+        if (sharedSecret) {
+          // 存储共享密钥
+          sessionStorage.setItem('sharedSecret', sharedSecret);
+          console.log('密钥交换成功，已生成共享密钥，长度:', sharedSecret.length);
+          
+          // 设置加密就绪状态
+          setEncryptionReady(true);
+          sessionStorage.setItem('encryptionReady', 'true');
+          
+          // 发送加密就绪确认
+          if (sessionStorage.getItem('encryptionReady') !== 'sent' && !hasHandledEncryptionReady) {
+            sendEncryptionReadyConfirmation(sourceConn || pendingConnection || activeConnectionRef.current);
+            setHasHandledEncryptionReady(true);
+          }
+        } else {
+          console.error('密钥交换失败');
+          displayToast('加密通道建立失败，请重试');
+        }
+      }
+      
+      // 处理加密就绪确认消息
+      else if (data.type === 'encryption-ready') {
+        console.log('收到加密就绪确认消息');
+        
+        // 确保共享密钥存在
+        const sharedSecret = sessionStorage.getItem('sharedSecret');
+        if (!sharedSecret) {
+          console.error('收到加密就绪确认，但共享密钥不存在');
+          return;
+        }
+        
+        // 设置加密就绪状态
+        setEncryptionReady(true);
+        sessionStorage.setItem('encryptionReady', 'true');
+        setHasHandledEncryptionReady(true);
+        
+        // 如果我们还没有发送过确认，也发送一个确认
+        if (sessionStorage.getItem('encryptionReady') !== 'sent') {
+          sendEncryptionReadyConfirmation(sourceConn || pendingConnection || activeConnectionRef.current);
+        }
+        
+        // 清除任何待处理的重试定时器
+        if (encryptionReadyConfirmationTimeoutRef.current) {
+          clearTimeout(encryptionReadyConfirmationTimeoutRef.current);
+          encryptionReadyConfirmationTimeoutRef.current = null;
+        }
+      }
+    } catch (error) {
+      console.error('处理接收数据时出错:', error);
+      displayToast('处理数据时出错，请重试');
+    }
+  };
+
+  // 初始化加密
+  const initializeEncryption = () => {
+    console.log('初始化加密');
+    
+    // 确定角色（发起方或接收方）
+    const isInitiator = sessionStorage.getItem('isInitiator') === 'true';
+    console.log('初始化加密，角色:', isInitiator ? '发起方' : '接收方');
+    
+    // 生成密钥对
+    const keyPair = encryptionService.generateKeyPair();
+    if (!keyPair) {
+      console.error('生成密钥对失败');
+      displayToast('加密初始化失败，请重试');
+      return;
+    }
+    
+    // 存储私钥（十六进制字符串格式）
+    const privateKeyHex = keyPair.privateKey.toString(CryptoJS.enc.Hex);
+    sessionStorage.setItem('privateKey', privateKeyHex);
+    console.log('已生成并存储私钥，长度:', privateKeyHex.length);
+    
+    // 创建密钥交换消息
+    const keyExchangeMessage = encryptionService.createKeyExchangeMessage(
+      keyPair.publicKey,
+      isInitiator
+    );
+    
+    if (!keyExchangeMessage) {
+      console.error('创建密钥交换消息失败');
+      displayToast('加密初始化失败，请重试');
+      return;
+    }
+    
+    // 发送公钥
+    try {
+      // 使用活动连接引用或其他可用连接
+      const activeConn = activeConnectionRef.current || pendingConnection;
+      
+      if (activeConn) {
+        activeConn.send(keyExchangeMessage);
+        console.log('已发送公钥进行密钥交换');
+      } else {
+        console.error('发送公钥失败: 没有可用的连接');
+        console.log('连接状态:', {
+          activeConnectionRef: activeConnectionRef.current ? '存在' : '不存在',
+          pendingConnection: pendingConnection ? '存在' : '不存在'
+        });
+        displayToast('加密初始化失败，请重试');
+        
+        // 尝试重新初始化加密
+        setTimeout(() => {
+          console.log('尝试重新初始化加密...');
+          initializeEncryption();
+        }, 2000);
+      }
+    } catch (error) {
+      console.error('发送公钥时出错:', error);
+      displayToast('加密初始化失败，请重试');
+    }
+  };
+
+  // 发送加密就绪确认
+  const sendEncryptionReadyConfirmation = (conn) => {
+    if (!conn) {
+      console.error('发送加密就绪确认失败: 没有可用的连接');
+      
+      // 尝试使用活动连接引用
+      if (activeConnectionRef.current) {
+        conn = activeConnectionRef.current;
+        console.log('使用活动连接引用重试发送加密就绪确认');
+      } else {
+        return;
+      }
+    }
+    
+    // 确保共享密钥存在
+    const sharedSecret = sessionStorage.getItem('sharedSecret');
+    if (!sharedSecret) {
+      console.error('发送加密就绪确认失败: 共享密钥不存在');
+      return;
+    }
+    
+    // 检查是否已经发送过加密就绪确认
+    if (sessionStorage.getItem('encryptionReady') === 'sent') {
+      console.log('已经发送过加密就绪确认，不再重复发送');
+      return;
+    }
+    
+    console.log('发送加密就绪确认消息');
     
     try {
-      // 连接到目标 Peer
-      const conn = peer.connect(targetId, {
-        reliable: true
+      conn.send({
+        type: 'encryption-ready'
       });
       
-      // 保存连接以便在接受后使用
-      setPendingConnection(conn);
+      console.log('已发送加密就绪确认消息');
+      sessionStorage.setItem('encryptionReady', 'sent');
       
-      // 设置数据连接监听器
-      peerService.setupDataConnectionListeners(conn, {
-        onOpen: () => {
-          console.log('成功连接到对方，等待对方接受请求');
-          clearTimeout(timeout);
-          displayToast('已发送连接请求，等待对方接受...');
-          
-          // 不再立即进入聊天界面，而是等待对方接受
-          // 在收到 connection-accepted 消息后才会进入聊天界面
-        },
-        onData: (data) => {
-          handleReceivedData(data, conn);
-        },
-        onClose: () => {
-          console.log('连接已关闭');
-          clearTimeout(timeout);
-          setConnectionStatus('disconnected');
-          setScreen('connection');
-          setWaitingForAcceptance(false);
-        },
-        onError: (err) => {
-          console.error('连接错误:', err);
-          clearTimeout(timeout);
-          setErrorMessage(`连接错误: ${err.message}`);
-          setConnectionStatus('failed');
-          setScreen('error');
-          setWaitingForAcceptance(false);
+      // 设置重试定时器，如果5秒内未收到对方确认，则重新发送
+      if (encryptionReadyConfirmationTimeoutRef.current) {
+        clearTimeout(encryptionReadyConfirmationTimeoutRef.current);
+      }
+      
+      encryptionReadyConfirmationTimeoutRef.current = setTimeout(() => {
+        if (sessionStorage.getItem('encryptionReady') !== 'confirmed') {
+          console.log('未收到对方的加密就绪确认，再次发送');
+          sendEncryptionReadyConfirmation(conn);
         }
-      });
+      }, 5000);
     } catch (error) {
-      console.error('连接到对方时出错:', error);
-      clearTimeout(timeout);
-      setErrorMessage(`连接错误: ${error.message}`);
-      setConnectionStatus('failed');
-      setScreen('error');
-      setWaitingForAcceptance(false);
+      console.error('发送加密就绪确认消息时出错:', error);
+      
+      // 如果发送失败，稍后重试
+      setTimeout(() => {
+        sendEncryptionReadyConfirmation(conn);
+      }, 2000);
     }
   };
 
-  // 验证自定义 ID
-  const validateCustomId = (id) => {
-    if (!id) {
-      setCustomIdError('请输入 ID');
-      return false;
+  // 接受连接请求
+  const acceptConnection = () => {
+    if (incomingConnection) {
+      handleIncomingConnection(incomingConnection);
+      setShowConnectionRequest(false);
     }
-    
-    if (id.length < 6 || id.length > 12) {
-      setCustomIdError('ID 长度必须在 6-12 位之间');
-      return false;
-    }
-    
-    if (!/^[a-zA-Z0-9]+$/.test(id)) {
-      setCustomIdError('ID 只能包含字母和数字');
-      return false;
-    }
-    
-    setCustomIdError('');
-    return true;
   };
 
-  // 验证目标 ID
-  const validateTargetId = (id) => {
-    if (!id) {
-      setTargetIdError('请输入对方的 ID');
-      return false;
-    }
+  // 渲染连接请求对话框
+  const renderConnectionRequestModal = () => {
+    if (!showConnectionRequest) return null;
     
-    if (id === peerId) {
-      setTargetIdError('不能连接到自己');
-      return false;
-    }
-    
-    setTargetIdError('');
-    return true;
+    return (
+      <ConnectionRequestModal>
+        <ModalContent>
+          <ModalTitle>收到连接请求</ModalTitle>
+          <p>来自 ID: {incomingPeerId} 的连接请求</p>
+          <ModalButtons>
+            <AcceptButton onClick={acceptConnection}>
+              <FiCheck style={{ marginRight: '5px' }} />
+              接受
+            </AcceptButton>
+            <RejectButton onClick={rejectIncomingConnection}>
+              <FiX style={{ marginRight: '5px' }} />
+              拒绝
+            </RejectButton>
+          </ModalButtons>
+        </ModalContent>
+      </ConnectionRequestModal>
+    );
   };
 
   return (
     <ConnectionContainer>
       <Card>
-        <Title>P2P 聊天系统</Title>
+        <Title>P2P 加密聊天</Title>
+        
+        <InputGroup>
+          <Label>创建自己的 ID</Label>
+          <Input
+            type="text"
+            value={peerId}
+            onChange={(e) => setPeerId(e.target.value)}
+            placeholder="输入自定义ID或生成随机ID"
+            disabled={isPeerCreated}
+          />
+          {customIdError && <p style={{ color: 'red', marginTop: '5px' }}>{customIdError}</p>}
+        </InputGroup>
+        
+        <Button
+          onClick={generateRandomId}
+          disabled={isPeerCreated}
+        >
+          生成随机ID
+        </Button>
+        
+        <Button
+          onClick={createPeerConnection}
+          disabled={isPeerCreated}
+        >
+          创建 Peer 连接
+        </Button>
+        
+        {isPeerCreated && (
+          <>
+            <InputGroup>
+              <Label>连接到对方</Label>
+              <Input
+                type="text"
+                value={targetId}
+                onChange={(e) => setTargetId(e.target.value)}
+                placeholder="输入对方的ID"
+                disabled={waitingForAcceptance}
+              />
+              {targetIdError && <p style={{ color: 'red', marginTop: '5px' }}>{targetIdError}</p>}
+            </InputGroup>
+            
+            <Button
+              onClick={connectToPeer}
+              disabled={waitingForAcceptance}
+            >
+              {waitingForAcceptance ? (
+                <>
+                  <FiLoader style={{ marginRight: '5px', animation: 'spin 1s linear infinite' }} />
+                  等待对方接受...
+                </>
+              ) : (
+                '发起连接'
+              )}
+            </Button>
+          </>
+        )}
         
         <StatusIndicator status={connectionStatus} />
         
-        <InputGroup>
-          <Label>您的 ID</Label>
-          <Input 
-            type="text" 
-            placeholder="输入 6-12 位字母数字 ID" 
-            value={peerId} 
-            onChange={(e) => {
-              setPeerId(e.target.value);
-              validateCustomId(e.target.value);
-            }}
-            disabled={isPeerCreated}
-          />
-          {customIdError && <p style={{ color: 'red', fontSize: '12px' }}>{customIdError}</p>}
-        </InputGroup>
-        
         {isPeerCreated && (
-          <CopyableId id={peerId} onCopy={() => displayToast('ID已复制到剪贴板')} />
-        )}
-        
-        {!isPeerCreated ? (
-          <Button 
-            onClick={createPeerConnection} 
-            disabled={
-              connectionStatus === 'connecting' || 
-              !peerId || 
-              !!customIdError
-            }
-          >
-            {connectionStatus === 'connecting' ? '创建中...' : '创建 Peer 连接'}
-          </Button>
-        ) : (
-          <>
-            <InputGroup>
-              <Label>目标用户 ID</Label>
-              <Input 
-                type="text" 
-                placeholder="输入对方的 ID" 
-                value={targetId} 
-                onChange={(e) => {
-                  setTargetId(e.target.value);
-                  validateTargetId(e.target.value);
-                }}
-                disabled={connectionStatus !== 'disconnected' || waitingForAcceptance}
-              />
-              {targetIdError && <p style={{ color: 'red', fontSize: '12px' }}>{targetIdError}</p>}
-            </InputGroup>
-            
-            <Button 
-              onClick={requestConnection} 
-              disabled={
-                connectionStatus !== 'disconnected' || 
-                !targetId || 
-                !!targetIdError || 
-                peerId === targetId ||
-                waitingForAcceptance
-              }
-            >
-              {waitingForAcceptance ? '等待对方接受...' : (connectionStatus === 'connecting' ? '请求连接中...' : '请求连接')}
-            </Button>
-            
-            {waitingForAcceptance && (
-              <p style={{ textAlign: 'center', color: '#666' }}>已发送连接请求，等待对方接受...</p>
-            )}
-          </>
+          <CopyableId id={peerId} />
         )}
       </Card>
       
-      {showConnectionRequest && (
-        <ConnectionRequestModal>
-          <ModalContent>
-            <ModalTitle>连接请求</ModalTitle>
-            <p>用户 <strong>{incomingPeerId}</strong> 请求与您建立连接。</p>
-            <ModalButtons>
-              <AcceptButton onClick={acceptConnectionRequest}>
-                <FiCheck style={{ marginRight: '5px' }} /> 接受
-              </AcceptButton>
-              <RejectButton onClick={rejectConnectionRequest}>
-                <FiX style={{ marginRight: '5px' }} /> 拒绝
-              </RejectButton>
-            </ModalButtons>
-          </ModalContent>
-        </ConnectionRequestModal>
-      )}
+      {renderConnectionRequestModal()}
       
-      <Toast message={toastMessage} visible={showToast} />
+      {showToast && (
+        <Toast message={toastMessage} />
+      )}
     </ConnectionContainer>
   );
 };

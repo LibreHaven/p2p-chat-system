@@ -11,12 +11,21 @@ const messageService = {
 
   // 序列化消息对象为JSON字符串
   serializeMessage: (message) => {
-    return JSON.stringify(message);
+    try {
+      return JSON.stringify(message);
+    } catch (error) {
+      console.error('Failed to serialize message:', error);
+      return null;
+    }
   },
 
   // 从JSON字符串解析消息对象
   deserializeMessage: (messageString) => {
     try {
+      if (!messageString) {
+        console.error('Cannot deserialize empty message');
+        return null;
+      }
       return JSON.parse(messageString);
     } catch (error) {
       console.error('Failed to parse message:', error);
