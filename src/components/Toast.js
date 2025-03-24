@@ -31,7 +31,7 @@ const Container = styled.div`
 `;
 
 const IconWrapper = styled.div`
-  color: ${props => props.type === 'error' ? '#e74c3c' : '#f39c12'};
+  color: ${props => props.$type === 'error' ? '#e74c3c' : '#f39c12'};
   margin-right: 12px;
   font-size: 20px;
 `;
@@ -46,7 +46,7 @@ const Toast = ({ message, type = 'warning', visible = false }) => {
   
   return (
     <Container>
-      <IconWrapper type={type}>
+      <IconWrapper $type={type}>
         <FiAlertCircle />
       </IconWrapper>
       <Message>{message}</Message>

@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import styled from 'styled-components';
 import { FiSend, FiLoader, FiRefreshCw } from 'react-icons/fi';
 import { encryptionService } from '../services/encryptionService';
+import peerService from '../services/peerService';
+import messageService from '../services/messageService';
 import CryptoJS from 'crypto-js';
 
 const ChatContainer = styled.div`
@@ -112,14 +114,14 @@ const MessageBubble = styled.div`
   border-radius: 18px;
   margin-bottom: 10px;
   word-wrap: break-word;
-  align-self: ${props => props.isSelf ? 'flex-end' : 'flex-start'};
-  background-color: ${props => props.isSelf ? '#4a90e2' : '#f1f0f0'};
-  color: ${props => props.isSelf ? 'white' : 'black'};
+  align-self: ${props => props.$isSelf ? 'flex-end' : 'flex-start'};
+  background-color: ${props => props.$isSelf ? '#4a90e2' : '#f1f0f0'};
+  color: ${props => props.$isSelf ? 'white' : 'black'};
 `;
 
 const Timestamp = styled.div`
   font-size: 12px;
-  color: ${props => props.isSelf ? 'rgba(255, 255, 255, 0.7)' : '#999'};
+  color: ${props => props.$isSelf ? 'rgba(255, 255, 255, 0.7)' : '#999'};
   margin-top: 5px;
 `;
 
@@ -127,38 +129,60 @@ const ConnectionStatusMessage = styled.div`
   text-align: center;
   padding: 10px;
   margin: 10px 0;
-  background-color: ${props => props.isError ? '#ffecec' : '#e8f4fc'};
-  color: ${props => props.isError ? '#e74c3c' : '#4a90e2'};
+  background-color: ${props => props.$isError ? '#ffecec' : '#e8f4fc'};
+  color: ${props => props.$isError ? '#e74c3c' : '#4a90e2'};
   border-radius: 4px;
   font-size: 14px;
 `;
 
-const ChatScreen = ({ connection, peerId, targetId, messages, setMessages }) => {
+// 新增加密状态指示器
+const EncryptionStatus = styled.div`
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  color: ${props => props.$isEncrypted ? '#2ecc71' : '#f39c12'};
+  margin-left: 10px;
+`;
+
+const ChatScreen = ({ connection, peerId, targetId, messages, setMessages, resetConnection }) => {
   const [message, setMessage] = useState('');
   const [encryptionReady, setEncryptionReady] = useState(false);
   const [encryptionStatus, setEncryptionStatus] = useState('正在建立加密通道...');
   const [connectionLost, setConnectionLost] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
+  const [isEncryptionEnabled, setIsEncryptionEnabled] = useState(true); // 是否启用加密
   const messagesEndRef = useRef(null);
   const activeConnectionRef = useRef(connection); // 保存活动连接引用
   const reconnectTimeoutRef = useRef(null); // 用于重连的定时器引用
   const heartbeatIntervalRef = useRef(null); // 用于心跳检测的定时器引用
   const lastHeartbeatResponseRef = useRef(Date.now()); // 上次收到心跳响应的时间
+  const maxEncryptionRetries = useRef(3); // 最大加密重试次数
+  const currentEncryptionRetries = useRef(0); // 当前加密重试次数
 
   // 初始化
   useEffect(() => {
     // 保存连接引用
     activeConnectionRef.current = connection;
     
-    // 检查加密状态
-    const isEncryptionReady = sessionStorage.getItem('encryptionReady') === 'true' || 
+    // 检查是否启用加密
+    const useEncryption = sessionStorage.getItem('useEncryption') === 'true';
+    setIsEncryptionEnabled(useEncryption);
+    
+    if (!useEncryption) {
+      // 非加密模式
+      setEncryptionReady(true);
+      setEncryptionStatus('未启用加密');
+    } else {
+      // 加密模式，检查加密状态
+      const isEncryptionReady = sessionStorage.getItem('encryptionReady') === 'true' || 
                               sessionStorage.getItem('encryptionReady') === 'sent' ||
                               sessionStorage.getItem('encryptionReady') === 'confirmed';
-    
-    if (isEncryptionReady) {
-      setEncryptionReady(true);
-      setEncryptionStatus('加密通道已建立');
+      
+      if (isEncryptionReady) {
+        setEncryptionReady(true);
+        setEncryptionStatus('加密通道已建立');
+      }
     }
     
     // 设置数据监听器
@@ -190,7 +214,9 @@ const ChatScreen = ({ connection, peerId, targetId, messages, setMessages }) => 
     }
     
     // 检查是否需要发送加密就绪确认
-    checkAndSendEncryptionReadyConfirmation();
+    if (useEncryption) {
+      checkAndSendEncryptionReadyConfirmation();
+    }
     
     // 组件卸载时清理
     return () => {
@@ -254,7 +280,8 @@ const ChatScreen = ({ connection, peerId, targetId, messages, setMessages }) => 
     }
     
     try {
-      activeConnectionRef.current.send({
+      // 使用安全发送方法确保连接已打开
+      peerService.sendMessageSafely(activeConnectionRef.current, {
         type: 'heartbeat',
         timestamp: Date.now()
       });
@@ -288,34 +315,18 @@ const ChatScreen = ({ connection, peerId, targetId, messages, setMessages }) => 
     // 设置重连定时器
     reconnectTimeoutRef.current = setTimeout(() => {
       // 尝试重新建立连接
-      // 这里需要调用父组件提供的重连方法
-      // 由于我们没有直接访问父组件的方法，所以这里只是模拟重连过程
-      
-      // 模拟重连成功
-      if (Math.random() > 0.3 || reconnectAttempts > 3) { // 70%的成功率，或者尝试超过3次
-        console.log('重连成功');
-        setConnectionLost(false);
-        setReconnecting(false);
-        setEncryptionStatus('加密通道已建立');
-        setEncryptionReady(true);
-        
-        // 重置重连尝试次数
-        setReconnectAttempts(0);
-        
-        // 重新启动心跳检测
-        startHeartbeat();
-      } else {
-        console.log('重连失败，将再次尝试');
-        setReconnecting(false);
-        
-        // 自动再次尝试重连
-        attemptReconnect();
-      }
+      resetConnection();
+      setReconnecting(false);
     }, delay);
   };
 
   // 检查并发送加密就绪确认
   const checkAndSendEncryptionReadyConfirmation = () => {
+    // 如果未启用加密，则不需要发送确认
+    if (sessionStorage.getItem('useEncryption') !== 'true') {
+      return;
+    }
+    
     // 确保共享密钥存在
     const sharedSecret = sessionStorage.getItem('sharedSecret');
     if (!sharedSecret) {
@@ -333,29 +344,54 @@ const ChatScreen = ({ connection, peerId, targetId, messages, setMessages }) => 
 
   // 发送加密就绪确认
   const sendEncryptionReadyConfirmation = () => {
+    // 如果未启用加密，则不需要发送确认
+    if (sessionStorage.getItem('useEncryption') !== 'true') {
+      return;
+    }
+    
     if (!activeConnectionRef.current) {
       console.error('发送加密就绪确认失败: 没有可用的连接');
+      return;
+    }
+    
+    // 确保共享密钥存在
+    const sharedSecret = sessionStorage.getItem('sharedSecret');
+    if (!sharedSecret) {
+      console.error('发送加密就绪确认失败: 共享密钥不存在');
+      return;
+    }
+    
+    // 检查是否已经发送过加密就绪确认
+    if (sessionStorage.getItem('encryptionReady') === 'sent' || 
+        sessionStorage.getItem('encryptionReady') === 'confirmed') {
+      console.log('已经发送过加密就绪确认，不再重复发送');
       return;
     }
     
     console.log('发送加密就绪确认消息');
     
     try {
-      activeConnectionRef.current.send({
+      // 使用安全发送方法确保连接已打开
+      const sent = peerService.sendMessageSafely(activeConnectionRef.current, {
         type: 'encryption-ready'
       });
       
-      console.log('已发送加密就绪确认消息');
-      sessionStorage.setItem('encryptionReady', 'sent');
-      setEncryptionReady(true);
-      setEncryptionStatus('加密通道已建立');
+      if (sent) {
+        console.log('已发送加密就绪确认消息');
+        sessionStorage.setItem('encryptionReady', 'sent');
+      } else {
+        console.log('连接未就绪，加密就绪确认消息将在连接打开后发送');
+      }
     } catch (error) {
       console.error('发送加密就绪确认消息时出错:', error);
       
-      // 如果发送失败，稍后重试
-      setTimeout(() => {
-        sendEncryptionReadyConfirmation();
-      }, 2000);
+      // 如果发送失败，稍后重试，但限制重试次数
+      if (currentEncryptionRetries.current < maxEncryptionRetries.current) {
+        currentEncryptionRetries.current++;
+        setTimeout(() => {
+          sendEncryptionReadyConfirmation();
+        }, 2000);
+      }
     }
   };
 
@@ -369,7 +405,7 @@ const ChatScreen = ({ connection, peerId, targetId, messages, setMessages }) => 
       if (data.type === 'heartbeat') {
         // 发送心跳响应
         try {
-          activeConnectionRef.current.send({
+          peerService.sendMessageSafely(activeConnectionRef.current, {
             type: 'heartbeat-response',
             timestamp: data.timestamp
           });
@@ -411,32 +447,49 @@ const ChatScreen = ({ connection, peerId, targetId, messages, setMessages }) => 
         return;
       }
       
-      // 处理加密消息
-      console.log('收到加密消息，尝试解密');
+      // 检查是否启用加密
+      const useEncryption = sessionStorage.getItem('useEncryption') === 'true';
       
-      // 获取共享密钥
-      const sharedSecret = sessionStorage.getItem('sharedSecret');
-      if (!sharedSecret) {
-        console.error('共享密钥不存在，无法解密消息');
-        return;
-      }
-      
-      // 解密消息
-      const decryptedText = encryptionService.decrypt(data, sharedSecret);
-      if (!decryptedText) {
-        console.error('解密失败');
-        return;
-      }
-      
-      // 反序列化消息
-      try {
-        const messageObj = JSON.parse(decryptedText);
-        console.log('消息反序列化成功:', messageObj);
+      if (useEncryption) {
+        // 加密模式 - 处理加密消息
+        console.log('收到加密消息，尝试解密');
         
-        // 添加到消息列表
-        setMessages(prevMessages => [...prevMessages, messageObj]);
-      } catch (error) {
-        console.error('消息反序列化失败:', error);
+        // 获取共享密钥
+        const sharedSecret = sessionStorage.getItem('sharedSecret');
+        if (!sharedSecret) {
+          console.error('共享密钥不存在，无法解密消息');
+          return;
+        }
+        
+        // 解密消息
+        const decryptedText = encryptionService.decrypt(data, sharedSecret);
+        if (!decryptedText) {
+          console.error('解密失败');
+          return;
+        }
+        
+        // 反序列化消息
+        try {
+          const messageObj = JSON.parse(decryptedText);
+          console.log('消息反序列化成功:', messageObj);
+          
+          // 添加到消息列表
+          setMessages(prevMessages => [...prevMessages, messageObj]);
+        } catch (error) {
+          console.error('消息反序列化失败:', error);
+        }
+      } else {
+        // 非加密模式 - 直接处理明文消息
+        if (data.type === 'chat-message') {
+          console.log('收到非加密聊天消息:', data);
+          
+          // 添加到消息列表
+          setMessages(prevMessages => [...prevMessages, {
+            text: data.text,
+            sender: data.sender,
+            timestamp: data.timestamp
+          }]);
+        }
       }
     } catch (error) {
       console.error('处理接收数据时出错:', error);
@@ -445,63 +498,64 @@ const ChatScreen = ({ connection, peerId, targetId, messages, setMessages }) => 
 
   // 发送消息
   const sendMessage = () => {
-    if (!message.trim() || !encryptionReady || connectionLost) return;
+    if (!message.trim() || connectionLost) return;
     
-    // 确保共享密钥存在
-    const sharedSecret = sessionStorage.getItem('sharedSecret');
-    if (!sharedSecret) {
-      console.error('共享密钥不存在，无法发送加密消息');
+    // 检查是否启用加密
+    const useEncryption = sessionStorage.getItem('useEncryption') === 'true';
+    
+    // 如果启用加密，则需要确保加密已就绪
+    if (useEncryption && !encryptionReady) {
+      console.error('加密通道尚未建立，无法发送消息');
       return;
     }
     
-    // 创建消息对象
-    const messageObj = {
-      text: message,
-      sender: peerId,
-      timestamp: Date.now()
-    };
-    
-    console.log('发送消息:', JSON.stringify(messageObj));
-    
-    // 序列化消息
-    const messageText = JSON.stringify(messageObj);
-    
-    // 确定角色（发起方或接收方）
-    const isInitiator = sessionStorage.getItem('isInitiator') === 'true';
-    console.log('发送消息，角色:', isInitiator ? '发起方' : '接收方');
-    
-    // 加密消息
-    const encryptedData = encryptionService.encrypt(messageText, sharedSecret);
-    if (!encryptedData) {
-      console.error('加密失败');
-      return;
-    }
-    
-    console.log('消息已加密，准备发送');
-    
-    // 发送加密消息
     try {
-      if (activeConnectionRef.current) {
-        activeConnectionRef.current.send(encryptedData);
-        console.log('加密消息已发送');
+      // 创建消息对象
+      const messageObj = {
+        text: message,
+        sender: peerId,
+        timestamp: Date.now()
+      };
+      
+      // 添加到本地消息列表
+      setMessages(prevMessages => [...prevMessages, messageObj]);
+      
+      if (useEncryption) {
+        // 加密模式 - 加密消息
         
-        // 添加到自己的消息列表
-        setMessages(prevMessages => [...prevMessages, messageObj]);
+        // 确保共享密钥存在
+        const sharedSecret = sessionStorage.getItem('sharedSecret');
+        if (!sharedSecret) {
+          console.error('共享密钥不存在，无法发送加密消息');
+          return;
+        }
         
-        // 清空输入框
-        setMessage('');
+        // 序列化消息
+        const messageString = JSON.stringify(messageObj);
         
-        // 更新最后一次心跳响应时间
-        lastHeartbeatResponseRef.current = Date.now();
+        // 加密消息
+        const encryptedData = encryptionService.encrypt(messageString, sharedSecret);
+        if (!encryptedData) {
+          console.error('加密失败');
+          return;
+        }
+        
+        // 发送加密消息
+        peerService.sendMessageSafely(activeConnectionRef.current, encryptedData);
       } else {
-        console.error('发送失败: 没有可用的连接');
-        setConnectionLost(true);
-        setEncryptionStatus('连接已断开');
+        // 非加密模式 - 直接发送明文消息
+        peerService.sendMessageSafely(activeConnectionRef.current, {
+          type: 'chat-message',
+          text: message,
+          sender: peerId,
+          timestamp: Date.now()
+        });
       }
+      
+      // 清空输入框
+      setMessage('');
     } catch (error) {
-      console.error('发送消息时出错:', error);
-      setConnectionLost(true);
-      setEncryptionStatus('连接已断开');
+      console.error('发送消息失败:', error);
     }
   };
 
@@ -511,35 +565,33 @@ const ChatScreen = ({ connection, peerId, targetId, messages, setMessages }) => 
     return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
   };
 
-  // 处理按键事件
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter') {
-      sendMessage();
-    }
-  };
-
   return (
     <ChatContainer>
       <ChatHeader>
-        <PeerId>与 {targetId} 聊天中</PeerId>
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <PeerId>与 {targetId} 聊天中</PeerId>
+          <EncryptionStatus $isEncrypted={isEncryptionEnabled}>
+            {isEncryptionEnabled ? '🔒 加密通信' : '🔓 非加密通信'}
+          </EncryptionStatus>
+        </div>
         <Status $isReady={encryptionReady && !connectionLost}>
           <StatusDot $isReady={encryptionReady && !connectionLost} />
-          {encryptionStatus}
+          {connectionLost ? '连接已断开' : encryptionStatus}
         </Status>
       </ChatHeader>
       
       <MessagesContainer>
         {messages.map((msg, index) => (
-          <MessageBubble key={index} isSelf={msg.sender === peerId}>
+          <MessageBubble key={index} $isSelf={msg.sender === peerId}>
             {msg.text}
-            <Timestamp isSelf={msg.sender === peerId}>
-              {formatTimestamp(msg.timestamp)}
+            <Timestamp $isSelf={msg.sender === peerId}>
+              {msg.sender} · {formatTimestamp(msg.timestamp)}
             </Timestamp>
           </MessageBubble>
         ))}
         
         {connectionLost && (
-          <ConnectionStatusMessage isError={true}>
+          <ConnectionStatusMessage $isError={true}>
             连接已断开，请尝试重新连接
           </ConnectionStatusMessage>
         )}
@@ -552,35 +604,32 @@ const ChatScreen = ({ connection, peerId, targetId, messages, setMessages }) => 
           type="text"
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          placeholder={connectionLost ? "连接已断开..." : "输入消息..."}
-          disabled={!encryptionReady || connectionLost}
-          onKeyPress={handleKeyPress}
+          placeholder="输入消息..."
+          disabled={connectionLost || (isEncryptionEnabled && !encryptionReady)}
+          onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
         />
         
         {connectionLost ? (
-          <ReconnectButton
-            onClick={attemptReconnect}
-            disabled={reconnecting}
-          >
+          <ReconnectButton onClick={attemptReconnect} disabled={reconnecting}>
             {reconnecting ? (
-              <FiLoader style={{ animation: 'spin 1s linear infinite' }} />
+              <>
+                <FiLoader style={{ marginRight: '5px', animation: 'spin 1s linear infinite' }} />
+                重连中...
+              </>
             ) : (
               <>
                 <FiRefreshCw style={{ marginRight: '5px' }} />
-                重连
+                重新连接
               </>
             )}
           </ReconnectButton>
         ) : (
-          <SendButton
-            onClick={sendMessage}
-            disabled={!encryptionReady || !message.trim() || connectionLost}
+          <SendButton 
+            onClick={sendMessage} 
+            disabled={(isEncryptionEnabled && !encryptionReady) || !message.trim()}
           >
-            {encryptionReady ? (
-              <FiSend />
-            ) : (
-              <FiLoader style={{ animation: 'spin 1s linear infinite' }} />
-            )}
+            <FiSend style={{ marginRight: '5px' }} />
+            发送
           </SendButton>
         )}
       </InputContainer>

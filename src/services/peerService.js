@@ -109,9 +109,31 @@ const setupDataConnectionListeners = (conn, callbacks = {}) => {
   conn.removeAllListeners('close');
   conn.removeAllListeners('error');
   
-  // 连接打开时的回调
+  // 连接打开时的回调 - 确保这是第一个被绑定的事件
   conn.on('open', () => {
     console.log('数据连接已打开，连接到:', conn.peer);
+    
+    // 标记连接已就绪
+    conn.isReady = true;
+    
+    // 处理待发送队列中的消息
+    if (conn.pendingMessages && conn.pendingMessages.length > 0) {
+      console.log(`处理 ${conn.pendingMessages.length} 条待发送消息`);
+      
+      // 发送所有待发送的消息
+      conn.pendingMessages.forEach(msg => {
+        try {
+          conn.send(msg);
+          console.log('成功发送待处理消息');
+        } catch (err) {
+          console.error('发送待处理消息失败:', err);
+        }
+      });
+      
+      // 清空待发送队列
+      conn.pendingMessages = [];
+    }
+    
     if (callbacks.onOpen) callbacks.onOpen();
   });
   
@@ -124,6 +146,7 @@ const setupDataConnectionListeners = (conn, callbacks = {}) => {
   // 连接关闭时的回调
   conn.on('close', () => {
     console.log('数据连接已关闭');
+    conn.isReady = false;
     if (callbacks.onClose) callbacks.onClose();
   });
   
@@ -132,6 +155,11 @@ const setupDataConnectionListeners = (conn, callbacks = {}) => {
     console.error('数据连接错误:', err);
     if (callbacks.onError) callbacks.onError(err);
   });
+  
+  // 初始化待发送消息队列
+  if (!conn.pendingMessages) {
+    conn.pendingMessages = [];
+  }
 };
 
 // 检查连接状态
@@ -141,15 +169,86 @@ const checkConnectionStatus = (conn) => {
   }
   
   try {
-    // 尝试发送一个心跳消息来检查连接
-    conn.send({
-      type: 'heartbeat',
-      timestamp: Date.now()
-    });
-    return 'connected';
+    // 检查连接是否已打开，避免在连接未就绪时发送消息
+    if (conn.open && conn.isReady) {
+      // 尝试发送一个心跳消息来检查连接
+      conn.send({
+        type: 'heartbeat',
+        timestamp: Date.now()
+      });
+      return 'connected';
+    } else {
+      console.log('连接尚未打开或未就绪，无法发送心跳消息');
+      return 'connecting';
+    }
   } catch (error) {
     console.error('连接状态检查失败:', error);
     return 'error';
+  }
+};
+
+// 安全发送消息
+const sendMessageSafely = (conn, message) => {
+  if (!conn) {
+    console.error('发送消息失败: 连接不存在');
+    return false;
+  }
+  
+  try {
+    // 检查连接是否已打开且就绪
+    if (conn.open && conn.isReady) {
+      conn.send(message);
+      return true;
+    } else {
+      console.log('连接尚未打开或未就绪，将消息添加到待发送队列');
+      
+      // 初始化待发送消息队列（如果不存在）
+      if (!conn.pendingMessages) {
+        conn.pendingMessages = [];
+      }
+      
+      // 将消息添加到待发送队列
+      conn.pendingMessages.push(message);
+      
+      // 如果连接未打开，则等待open事件后再发送
+      if (!conn.open) {
+        // 确保只添加一次open事件监听器
+        if (!conn._hasPendingOpenHandler) {
+          conn._hasPendingOpenHandler = true;
+          
+          const onOpenHandler = () => {
+            conn.isReady = true;
+            conn._hasPendingOpenHandler = false;
+            
+            // 处理待发送队列中的消息
+            if (conn.pendingMessages && conn.pendingMessages.length > 0) {
+              console.log(`连接已打开，处理 ${conn.pendingMessages.length} 条待发送消息`);
+              
+              // 发送所有待发送的消息
+              conn.pendingMessages.forEach(msg => {
+                try {
+                  conn.send(msg);
+                  console.log('成功发送待处理消息');
+                } catch (err) {
+                  console.error('发送待处理消息失败:', err);
+                }
+              });
+              
+              // 清空待发送队列
+              conn.pendingMessages = [];
+            }
+          };
+          
+          // 添加一次性open事件监听器
+          conn.once('open', onOpenHandler);
+        }
+      }
+      
+      return false;
+    }
+  } catch (error) {
+    console.error('发送消息失败:', error);
+    return false;
   }
 };
 
@@ -183,6 +282,7 @@ const peerService = {
   connectToPeer,
   setupDataConnectionListeners,
   checkConnectionStatus,
+  sendMessageSafely,
   reestablishConnection
 };
 

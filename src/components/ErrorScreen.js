@@ -55,7 +55,7 @@ const Button = styled.button`
   align-items: center;
   gap: 8px;
   
-  ${props => props.primary ? `
+  ${props => props.$primary ? `
     background-color: #4a90e2;
     color: white;
   ` : `
@@ -119,7 +119,7 @@ const ErrorScreen = ({
           <Button onClick={resetConnection}>
             <FiArrowLeft /> 返回主界面
           </Button>
-          <Button primary onClick={retryConnection}>
+          <Button $primary onClick={retryConnection}>
             <FiRefreshCw /> 重试连接
           </Button>
         </ButtonGroup>
