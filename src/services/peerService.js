@@ -183,7 +183,7 @@ class PeerService {
 
     // 生成唯一的传输ID
     const transferId = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
+
     // 初始化文件传输状态
     this.fileTransfers[transferId] = {
       file: file,
@@ -195,16 +195,16 @@ class PeerService {
 
     // 读取文件
     const reader = new FileReader();
-    
+
     reader.onload = (event) => {
       try {
         // 获取文件数据
         const fileData = new Uint8Array(event.target.result);
-        
+
         // 计算总块数
         const totalChunks = Math.ceil(fileData.length / CHUNK_SIZE);
         this.fileTransfers[transferId].totalChunks = totalChunks;
-        
+
         // 发送文件元数据
         const metadata = {
           type: 'file-metadata',
@@ -215,10 +215,10 @@ class PeerService {
           chunksCount: totalChunks,
           timestamp: Date.now()
         };
-        
+
         // 发送元数据(元数据始终使用JSON格式)
         const metadataStr = JSON.stringify(metadata);
-        
+
         if (useEncryption && sharedSecret) {
           // 加密模式
           const encryptedMetadata = encryptionService.encrypt(metadataStr, sharedSecret);
@@ -227,13 +227,13 @@ class PeerService {
           // 非加密模式
           this.sendMessageSafely(connection, metadataStr);
         }
-        
+
         // 分块发送文件
         for (let i = 0; i < totalChunks; i++) {
           const start = i * CHUNK_SIZE;
           const end = Math.min(start + CHUNK_SIZE, fileData.length);
           const chunk = fileData.slice(start, end);
-          
+
           // 使用setTimeout错开发送时间，避免阻塞
           setTimeout(() => {
             this.sendFileChunk(connection, transferId, i, chunk, useEncryption, sharedSecret);
@@ -245,13 +245,13 @@ class PeerService {
         delete this.fileTransfers[transferId];
       }
     };
-    
+
     reader.onerror = (error) => {
       console.error('读取文件失败:', error);
       if (callbacks.onError) callbacks.onError(error);
       delete this.fileTransfers[transferId];
     };
-    
+
     // 开始读取文件
     reader.readAsArrayBuffer(file);
   }
@@ -271,7 +271,7 @@ class PeerService {
         console.error('文件传输状态不存在:', transferId);
         return;
       }
-      
+
       // 准备块数据
       const chunkMessage = {
         type: 'file-chunk',
@@ -279,77 +279,77 @@ class PeerService {
         chunkIndex: chunkIndex,
         isLastChunk: chunkIndex === this.fileTransfers[transferId].totalChunks - 1
       };
-      
+
       if (useEncryption && sharedSecret) {
         // 加密模式
         // 将二进制数据转换为Base64字符串
         const base64Data = this.arrayBufferToBase64(chunkData);
-        
+
         // 加密Base64字符串
         const encryptedData = encryptionService.encryptRaw(base64Data, sharedSecret);
-        
+
         // 添加加密数据
         chunkMessage.encryptedData = encryptedData;
-        
+
         // 发送加密块
         this.sendMessageSafely(connection, JSON.stringify(chunkMessage));
       } else {
         // 非加密模式 - 直接发送二进制数据
         // 注意: 由于我们使用binary序列化，这里可以直接发送二进制数据
         const message = JSON.stringify(chunkMessage);
-        
+
         // 创建一个新的ArrayBuffer，包含消息头和块数据
         const messageBuffer = new TextEncoder().encode(message);
         const combinedBuffer = new Uint8Array(messageBuffer.length + chunkData.length + 4);
-        
+
         // 写入消息头长度(4字节)
         const headerLength = messageBuffer.length;
         combinedBuffer[0] = (headerLength >> 24) & 0xFF;
         combinedBuffer[1] = (headerLength >> 16) & 0xFF;
         combinedBuffer[2] = (headerLength >> 8) & 0xFF;
         combinedBuffer[3] = headerLength & 0xFF;
-        
+
         // 写入消息头
         combinedBuffer.set(messageBuffer, 4);
-        
+
         // 写入块数据
         combinedBuffer.set(chunkData, 4 + messageBuffer.length);
-        
+
         // 发送组合后的数据
         this.sendMessageSafely(connection, combinedBuffer.buffer);
       }
-      
+
       // 更新已发送块数
       this.fileTransfers[transferId].sentChunks++;
-      
+
       // 计算进度
       const progress = (this.fileTransfers[transferId].sentChunks / this.fileTransfers[transferId].totalChunks) * 100;
-      
+
       // 调用进度回调
       if (this.fileTransfers[transferId].callbacks.onProgress) {
         this.fileTransfers[transferId].callbacks.onProgress(transferId, progress);
       }
-      
+
       // 检查是否所有块都已发送
       if (this.fileTransfers[transferId].sentChunks === this.fileTransfers[transferId].totalChunks) {
         console.log('文件传输完成:', transferId);
-        
+
         // 调用完成回调
         if (this.fileTransfers[transferId].callbacks.onComplete) {
           this.fileTransfers[transferId].callbacks.onComplete(transferId);
         }
-        
+
         // 清理传输状态
         delete this.fileTransfers[transferId];
       }
     } catch (error) {
       console.error('发送文件块失败:', error);
-      
+
       // 调用错误回调
       if (this.fileTransfers[transferId] && this.fileTransfers[transferId].callbacks.onError) {
         this.fileTransfers[transferId].callbacks.onError(error);
       }
-      
+
       // 清理传输状态
       delete this.fileTransfers[transferId];
     }
@@ -391,7 +391,7 @@ class PeerService {
     try {
       // 尝试解析为JSON
       let jsonData;
-      
+
       if (useEncryption && sharedSecret) {
         // 加密模式 - 尝试解密
         try {
@@ -417,7 +417,7 @@ class PeerService {
           return;
         }
       }
-      
+
       // 根据消息类型处理
       if (jsonData.type === 'file-metadata') {
         // 文件元数据
@@ -428,11 +428,11 @@ class PeerService {
           // 解密数据
           const decryptedBase64 = encryptionService.decryptRaw(jsonData.encryptedData, sharedSecret);
           const chunkData = this.base64ToArrayBuffer(decryptedBase64);
-          
+
           if (callbacks.onFileChunk) {
             callbacks.onFileChunk(jsonData.transferId, jsonData.chunkIndex, chunkData, jsonData);
           }
-          
+
           if (jsonData.isLastChunk && callbacks.onFileTransferComplete) {
             callbacks.onFileTransferComplete(jsonData.transferId);
           }
@@ -457,27 +457,27 @@ class PeerService {
     try {
       // 确保数据是Uint8Array
       const dataView = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
-      
+
       // 读取消息头长度(前4字节)
       const headerLength = (dataView[0] << 24) | (dataView[1] << 16) | (dataView[2] << 8) | dataView[3];
-      
+
       // 提取消息头
       const headerData = dataView.slice(4, 4 + headerLength);
       const headerText = new TextDecoder().decode(headerData);
-      
+
       // 解析消息头
       const header = JSON.parse(headerText);
-      
+
       // 提取块数据
       const chunkData = dataView.slice(4 + headerLength);
-      
+
       // 根据消息类型处理
       if (header.type === 'file-chunk') {
         // 文件块
         if (callbacks.onFileChunk) {
           callbacks.onFileChunk(header.transferId, header.chunkIndex, chunkData, header);
         }
-        
+
         if (header.isLastChunk && callbacks.onFileTransferComplete) {
           callbacks.onFileTransferComplete(header.transferId);
         }
@@ -499,11 +499,11 @@ class PeerService {
     let binary = '';
     const bytes = new Uint8Array(buffer);
     const len = bytes.byteLength;
-    
+
     for (let i = 0; i < len; i++) {
       binary += String.fromCharCode(bytes[i]);
     }
-    
+
     return window.btoa(binary);
   }
 
@@ -516,11 +516,11 @@ class PeerService {
     const binaryString = window.atob(base64);
     const len = binaryString.length;
     const bytes = new Uint8Array(len);
-    
+
     for (let i = 0; i < len; i++) {
       bytes[i] = binaryString.charCodeAt(i);
     }
-    
+
     return bytes.buffer;
   }
 }
@@ -558,7 +558,7 @@ const initializePeer = (id) => {
         ]
       }
     });
-    
+
     return peer;
   } catch (error) {
     console.error('初始化Peer失败:', error);
@@ -573,43 +573,43 @@ const initializePeer = (id) => {
  */
 const setupConnectionListeners = (peer, callbacks = {}) => {
   if (!peer) return;
-  
+
   // 移除所有现有监听器，防止重复绑定
   peer.removeAllListeners('open');
   peer.removeAllListeners('connection');
   peer.removeAllListeners('error');
   peer.removeAllListeners('disconnected');
   peer.removeAllListeners('close');
-  
+
   // 连接打开时的回调
   peer.on('open', (id) => {
     if (callbacks.onOpen) callbacks.onOpen(id);
   });
-  
+
   // 收到连接请求时的回调
   peer.on('connection', (conn) => {
     if (callbacks.onConnection) callbacks.onConnection(conn);
   });
-  
+
   // 发生错误时的回调
   peer.on('error', (err) => {
     if (callbacks.onError) callbacks.onError(err);
   });
-  
+
   // 连接断开时的回调
   peer.on('disconnected', () => {
     console.log('Peer连接已断开，尝试重新连接...');
-    
+
     // 尝试重新连接
     try {
       peer.reconnect();
     } catch (error) {
       console.error('重新连接失败:', error);
     }
-    
+
     if (callbacks.onDisconnected) callbacks.onDisconnected();
   });
-  
+
   // 连接关闭时的回调
   peer.on('close', () => {
     if (callbacks.onClose) callbacks.onClose();
@@ -624,7 +624,7 @@ const setupConnectionListeners = (peer, callbacks = {}) => {
  */
 const connectToPeer = (peer, targetId) => {
   if (!peer) return null;
-  
+
   try {
     // 连接到目标Peer，设置可靠性选项
     const conn = peer.connect(targetId, {
@@ -635,7 +635,7 @@ const connectToPeer = (peer, targetId) => {
         timestamp: Date.now()
       }
     });
-    
+
     return conn;
   } catch (error) {
     console.error('连接到目标Peer失败:', error);
@@ -650,24 +650,24 @@ const connectToPeer = (peer, targetId) => {
  */
 const setupDataConnectionListeners = (conn, callbacks = {}) => {
   if (!conn) return;
-  
+
   // 移除所有现有监听器，防止重复绑定
   conn.removeAllListeners('open');
   conn.removeAllListeners('data');
   conn.removeAllListeners('close');
   conn.removeAllListeners('error');
-  
+
   // 连接打开时的回调 - 确保这是第一个被绑定的事件
   conn.on('open', () => {
     console.log('数据连接已打开，连接到:', conn.peer);
-    
+
     // 标记连接已就绪
     conn.isReady = true;
-    
+
     // 处理待发送队列中的消息
     if (conn.pendingMessages && conn.pendingMessages.length > 0) {
       console.log(`处理 ${conn.pendingMessages.length} 条待发送消息`);
-      
+
       // 发送所有待发送的消息
       conn.pendingMessages.forEach(msg => {
         try {
@@ -677,33 +677,33 @@ const setupDataConnectionListeners = (conn, callbacks = {}) => {
           console.error('发送待处理消息失败:', err);
         }
       });
-      
+
       // 清空待发送队列
       conn.pendingMessages = [];
     }
-    
+
     if (callbacks.onOpen) callbacks.onOpen();
   });
-  
+
   // 收到数据时的回调
   conn.on('data', (data) => {
     console.log('收到来自', conn.peer, '的数据');
     if (callbacks.onData) callbacks.onData(data);
   });
-  
+
   // 连接关闭时的回调
   conn.on('close', () => {
     console.log('数据连接已关闭');
     conn.isReady = false;
     if (callbacks.onClose) callbacks.onClose();
   });
-  
+
   // 发生错误时的回调
   conn.on('error', (err) => {
     console.error('数据连接错误:', err);
     if (callbacks.onError) callbacks.onError(err);
   });
-  
+
   // 初始化待发送消息队列
   if (!conn.pendingMessages) {
     conn.pendingMessages = [];
@@ -719,7 +719,7 @@ const checkConnectionStatus = (conn) => {
   if (!conn) {
     return 'disconnected';
   }
-  
+
   try {
     // 检查连接是否已打开，避免在连接未就绪时发送消息
     if (conn.open && conn.isReady) {
@@ -760,16 +760,16 @@ const reestablishConnection = (peer, targetId, callbacks = {}) => {
   if (!peer || !targetId) {
     return null;
   }
-  
+
   console.log('尝试重新建立连接到:', targetId);
-  
+
   try {
     // 连接到目标Peer
     const conn = connectToPeer(peer, targetId);
-    
+
     // 设置数据连接监听器
     setupDataConnectionListeners(conn, callbacks);
-    
+
     return conn;
   } catch (error) {
     console.error('重新建立连接失败:', error);

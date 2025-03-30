@@ -1,156 +1,297 @@
-import CryptoJS from 'crypto-js';
+/**
+ * encryptionService.js
+ * 
+ * 使用 Web Crypto API 实现 ECDH 密钥交换和 AES-GCM 加密。
+ */
 
-// 生成密钥对
-const generateKeyPair = () => {
+const utils = {
+  arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+  },
+
+  base64ToArrayBuffer(base64) {
+    const binaryString = window.atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
+  },
+
+  stringToArrayBuffer(str) {
+    return new TextEncoder().encode(str).buffer;
+  },
+
+  arrayBufferToString(buffer) {
+    return new TextDecoder().decode(buffer);
+  },
+
+  hexToArrayBuffer(hex) {
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2) {
+      bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
+    }
+    return bytes.buffer;
+  },
+
+  arrayBufferToHex(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let hex = '';
+    for (let i = 0; i < bytes.length; i++) {
+      hex += bytes[i].toString(16).padStart(2, '0');
+    }
+    return hex;
+  }
+};
+
+const generateKeyPair = async () => {
   try {
-    // 生成私钥（随机字节）
-    const privateKey = CryptoJS.lib.WordArray.random(32); // 256位私钥
-    
-    // 从私钥派生公钥（这里简化处理，实际应使用椭圆曲线密码学）
-    // 在真实场景中，应使用 ECDH 或其他密钥交换算法
-    const publicKey = CryptoJS.SHA256(privateKey);
-    
-    console.log('生成密钥对成功');
-    
-    return {
+    console.log('Generating ECDH key pair...');
+    if (!window.crypto || !window.crypto.subtle) {
+      throw new Error('Web Crypto API 不可用，请确保页面使用 HTTPS 协议');
+    }
+    const keyPair = await window.crypto.subtle.generateKey(
+      { name: 'ECDH', namedCurve: 'P-256' },
+      true,
+      ['deriveKey', 'deriveBits']
+    );
+    console.log('ECDH key pair generated successfully');
+    return keyPair;
+  } catch (error) {
+    console.error('Failed to generate ECDH key pair:', error);
+    throw error;
+  }
+};
+
+const exportPublicKey = async (publicKey) => {
+  try {
+    console.log('Exporting public key...');
+    const exportedKey = await window.crypto.subtle.exportKey('spki', publicKey);
+    const base64Key = utils.arrayBufferToBase64(exportedKey);
+    console.log('Public key exported successfully, length:', base64Key.length);
+    return base64Key;
+  } catch (error) {
+    console.error('Failed to export public key:', error);
+    throw error;
+  }
+};
+
+const importPublicKey = async (base64Key) => {
+  try {
+    console.log('Importing public key...');
+    const keyData = utils.base64ToArrayBuffer(base64Key);
+    const publicKey = await window.crypto.subtle.importKey(
+      'spki',
+      keyData,
+      { name: 'ECDH', namedCurve: 'P-256' },
+      true,
+      []
+    );
+    console.log('Public key imported successfully');
+    return publicKey;
+  } catch (error) {
+    console.error('Failed to import public key:', error);
+    throw error;
+  }
+};
+
+const deriveSharedSecret = async (privateKey, publicKey) => {
+  try {
+    console.log('Deriving shared secret key...');
+    const sharedKey = await window.crypto.subtle.deriveKey(
+      { name: 'ECDH', public: publicKey },
       privateKey,
-      publicKey
-    };
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+    console.log('Shared secret key derived successfully');
+    return sharedKey;
   } catch (error) {
-    console.error('生成密钥对失败:', error);
-    return null;
+    console.error('Failed to derive shared secret key:', error);
+    throw error;
   }
 };
 
-// 派生共享密钥
-const deriveSharedSecret = (privateKey, publicKey, isInitiator) => {
+const encrypt = async (message, sharedKey) => {
   try {
-    console.log('派生共享密钥, 角色:', isInitiator ? '发起方' : '接收方');
-    
-    // 在真实场景中，这里应该使用 ECDH 密钥交换算法
-    // 这里简化处理，使用私钥和公钥的组合生成共享密钥
-    let sharedSecret;
-    
-    if (isInitiator) {
-      // 发起方的共享密钥派生
-      sharedSecret = CryptoJS.HmacSHA256(publicKey, privateKey);
-    } else {
-      // 接收方的共享密钥派生
-      sharedSecret = CryptoJS.HmacSHA256(privateKey, publicKey);
+    const messageString = typeof message === 'object' ? JSON.stringify(message) : message;
+    console.log('Encrypting message...');
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const messageBuffer = utils.stringToArrayBuffer(messageString);
+    const encryptedBuffer = await window.crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, tagLength: 128 },
+      sharedKey,
+      messageBuffer
+    );
+    const encryptedBase64 = utils.arrayBufferToBase64(encryptedBuffer);
+    const ivBase64 = utils.arrayBufferToBase64(iv);
+    console.log('Message encrypted successfully');
+    return { type: 'encrypted-message', iv: ivBase64, ciphertext: encryptedBase64 };
+  } catch (error) {
+    console.error('Encryption failed:', error);
+    throw error;
+  }
+};
+
+const decrypt = async (encryptedData, sharedKey) => {
+  try {
+    if (!encryptedData || encryptedData.type !== 'encrypted-message') {
+      console.error('Invalid encrypted data format');
+      throw new Error('Invalid encrypted data format');
     }
-    
-    console.log('派生共享密钥成功');
-    
-    // 返回十六进制字符串格式的共享密钥
-    return sharedSecret.toString(CryptoJS.enc.Hex);
-  } catch (error) {
-    console.error('派生共享密钥失败:', error);
-    return null;
-  }
-};
-
-// 处理密钥交换
-const handleKeyExchange = (privateKey, publicKeyHex, isInitiator) => {
-  try {
-    // 将十六进制字符串转换回 WordArray
-    const publicKey = CryptoJS.enc.Hex.parse(publicKeyHex);
-    
-    // 派生共享密钥
-    return deriveSharedSecret(privateKey, publicKey, isInitiator);
-  } catch (error) {
-    console.error('处理密钥交换失败:', error);
-    return null;
-  }
-};
-
-// 创建密钥交换消息
-const createKeyExchangeMessage = (publicKey, isInitiator) => {
-  try {
-    // 将公钥转换为十六进制字符串
-    const publicKeyHex = publicKey.toString(CryptoJS.enc.Hex);
-    
-    console.log('创建密钥交换消息, 公钥长度:', publicKeyHex.length, '角色:', isInitiator ? '发起方' : '接收方');
-    
-    // 创建密钥交换消息
-    return {
-      type: 'encryption-key',
-      publicKey: publicKeyHex,
-      isInitiator: isInitiator
-    };
-  } catch (error) {
-    console.error('创建密钥交换消息失败:', error);
-    return null;
-  }
-};
-
-// 加密消息
-const encrypt = (plaintext, sharedSecret) => {
-  try {
-    console.log('加密消息:', plaintext);
-    
-    // 将共享密钥转换为 WordArray
-    const key = CryptoJS.enc.Hex.parse(sharedSecret);
-    
-    // 生成随机初始化向量
-    const iv = CryptoJS.lib.WordArray.random(16);
-    
-    // 使用 AES-CBC 模式加密
-    const encrypted = CryptoJS.AES.encrypt(plaintext, key, {
-      iv: iv,
-      padding: CryptoJS.pad.Pkcs7,
-      mode: CryptoJS.mode.CBC
-    });
-    
-    // 将加密结果和初始化向量组合
-    const result = {
-      type: 'encrypted-message',
-      iv: iv.toString(CryptoJS.enc.Hex),
-      ciphertext: encrypted.toString()
-    };
-    
-    return result;
-  } catch (error) {
-    console.error('加密失败:', error);
-    return null;
-  }
-};
-
-// 解密消息
-const decrypt = (encryptedData, sharedSecret) => {
-  try {
-    // 确保数据格式正确
-    if (!encryptedData || !encryptedData.type || encryptedData.type !== 'encrypted-message') {
-      console.error('无效的加密数据格式');
-      return null;
+    console.log('Decrypting message...');
+    const iv = utils.base64ToArrayBuffer(encryptedData.iv);
+    const ciphertext = utils.base64ToArrayBuffer(encryptedData.ciphertext);
+    const decryptedBuffer = await window.crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: new Uint8Array(iv), tagLength: 128 },
+      sharedKey,
+      ciphertext
+    );
+    const decryptedString = utils.arrayBufferToString(decryptedBuffer);
+    console.log('Message decrypted successfully');
+    try {
+      return JSON.parse(decryptedString);
+    } catch (e) {
+      return decryptedString;
     }
-    
-    // 将共享密钥转换为 WordArray
-    const key = CryptoJS.enc.Hex.parse(sharedSecret);
-    
-    // 将初始化向量转换为 WordArray
-    const iv = CryptoJS.enc.Hex.parse(encryptedData.iv);
-    
-    // 使用 AES-CBC 模式解密
-    const decrypted = CryptoJS.AES.decrypt(encryptedData.ciphertext, key, {
-      iv: iv,
-      padding: CryptoJS.pad.Pkcs7,
-      mode: CryptoJS.mode.CBC
-    });
-    
-    // 将解密结果转换为字符串
-    return decrypted.toString(CryptoJS.enc.Utf8);
   } catch (error) {
-    console.error('解密失败:', error);
-    return null;
+    console.error('Decryption failed:', error);
+    throw error;
   }
 };
 
-// 导出服务
+const encryptRaw = async (base64Data, sharedKey) => {
+  try {
+    console.log('Encrypting raw binary data...');
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const dataBuffer = utils.base64ToArrayBuffer(base64Data);
+    const encryptedBuffer = await window.crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, tagLength: 128 },
+      sharedKey,
+      dataBuffer
+    );
+    const encryptedBase64 = utils.arrayBufferToBase64(encryptedBuffer);
+    const ivBase64 = utils.arrayBufferToBase64(iv);
+    console.log('Raw binary data encrypted successfully');
+    return { type: 'encrypted-binary', iv: ivBase64, encryptedData: encryptedBase64 };
+  } catch (error) {
+    console.error('Raw binary encryption failed:', error);
+    throw error;
+  }
+};
+
+const decryptRaw = async (encryptedData, sharedKey) => {
+  try {
+    if (!encryptedData || !encryptedData.iv || !encryptedData.encryptedData) {
+      console.error('Invalid encrypted binary data format');
+      throw new Error('Invalid encrypted binary data format');
+    }
+    console.log('Decrypting raw binary data...');
+    const iv = utils.base64ToArrayBuffer(encryptedData.iv);
+    const ciphertext = utils.base64ToArrayBuffer(encryptedData.encryptedData);
+    const decryptedBuffer = await window.crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: new Uint8Array(iv), tagLength: 128 },
+      sharedKey,
+      ciphertext
+    );
+    const decryptedBase64 = utils.arrayBufferToBase64(decryptedBuffer);
+    console.log('Raw binary data decrypted successfully');
+    return decryptedBase64;
+  } catch (error) {
+    console.error('Raw binary decryption failed:', error);
+    throw error;
+  }
+};
+
+const createKeyExchangeMessage = (publicKeyBase64) => {
+  try {
+    console.log('Creating key exchange message, public key length:', publicKeyBase64.length);
+    return { type: 'encryption-key', publicKey: publicKeyBase64 };
+  } catch (error) {
+    console.error('Failed to create key exchange message:', error);
+    throw error;
+  }
+};
+
+class EncryptionState {
+  constructor() {
+    this.keyPair = null;
+    this.remotePublicKey = null;
+    this.sharedSecret = null;
+    this.isHandshakeComplete = false;
+  }
+
+  async initialize() {
+    try {
+      this.keyPair = await generateKeyPair();
+      const publicKeyBase64 = await exportPublicKey(this.keyPair.publicKey);
+      console.log('Encryption state initialized');
+      return publicKeyBase64;
+    } catch (error) {
+      console.error('Failed to initialize encryption state:', error);
+      throw error;
+    }
+  }
+
+  async processRemotePublicKey(remotePublicKeyBase64) {
+    try {
+      this.remotePublicKey = await importPublicKey(remotePublicKeyBase64);
+      this.sharedSecret = await deriveSharedSecret(this.keyPair.privateKey, this.remotePublicKey);
+      this.isHandshakeComplete = true;
+      console.log('Encryption handshake completed');
+      return true;
+    } catch (error) {
+      console.error('Failed to process remote public key:', error);
+      this.isHandshakeComplete = false;
+      throw error;
+    }
+  }
+
+  isReady() {
+    return this.isHandshakeComplete;
+  }
+
+  async encryptMessage(message) {
+    if (!this.isHandshakeComplete) {
+      console.error('Encryption handshake not complete');
+      throw new Error('Encryption handshake not complete');
+    }
+    return encrypt(message, this.sharedSecret);
+  }
+
+  async decryptMessage(encryptedData) {
+    if (!this.isHandshakeComplete) {
+      console.error('Encryption handshake not complete');
+      throw new Error('Encryption handshake not complete');
+    }
+    return decrypt(encryptedData, this.sharedSecret);
+  }
+
+  reset() {
+    this.keyPair = null;
+    this.remotePublicKey = null;
+    this.sharedSecret = null;
+    this.isHandshakeComplete = false;
+    console.log('Encryption state reset');
+  }
+}
+
 export const encryptionService = {
   generateKeyPair,
+  exportPublicKey,
+  importPublicKey,
   deriveSharedSecret,
-  handleKeyExchange,
-  createKeyExchangeMessage,
   encrypt,
-  decrypt
+  decrypt,
+  encryptRaw,
+  decryptRaw,
+  createKeyExchangeMessage,
+  EncryptionState,
+  utils
 };
