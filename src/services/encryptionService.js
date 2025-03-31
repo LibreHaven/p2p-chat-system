@@ -139,13 +139,21 @@ const encrypt = async (message, sharedKey) => {
   }
 };
 
-const decrypt = async (encryptedData, sharedKey) => {
+export const decrypt = async (encryptedData, sharedKey) => {
   try {
-    if (!encryptedData || encryptedData.type !== 'encrypted-message') {
-      console.error('Invalid encrypted data format');
-      throw new Error('Invalid encrypted data format');
+    // 仅处理普通文本消息加密格式
+    if (
+      !encryptedData ||
+      typeof encryptedData !== 'object' ||
+      encryptedData.type !== 'encrypted-message' ||
+      typeof encryptedData.iv !== 'string' ||
+      typeof encryptedData.ciphertext !== 'string'
+    ) {
+      console.error('Invalid encrypted data format:', encryptedData);
+      return null;  // 或者抛出异常：throw new Error('Invalid encrypted data format');
     }
     console.log('Decrypting message...');
+    // 修改处：使用 utils. 前缀调用工具函数
     const iv = utils.base64ToArrayBuffer(encryptedData.iv);
     const ciphertext = utils.base64ToArrayBuffer(encryptedData.ciphertext);
     const decryptedBuffer = await window.crypto.subtle.decrypt(
@@ -155,11 +163,7 @@ const decrypt = async (encryptedData, sharedKey) => {
     );
     const decryptedString = utils.arrayBufferToString(decryptedBuffer);
     console.log('Message decrypted successfully');
-    try {
-      return JSON.parse(decryptedString);
-    } catch (e) {
-      return decryptedString;
-    }
+    return decryptedString;
   } catch (error) {
     console.error('Decryption failed:', error);
     throw error;

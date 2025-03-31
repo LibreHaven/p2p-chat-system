@@ -196,16 +196,12 @@ class PeerService {
     // 读取文件
     const reader = new FileReader();
 
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
-        // 获取文件数据
         const fileData = new Uint8Array(event.target.result);
-
-        // 计算总块数
         const totalChunks = Math.ceil(fileData.length / CHUNK_SIZE);
         this.fileTransfers[transferId].totalChunks = totalChunks;
 
-        // 发送文件元数据
         const metadata = {
           type: 'file-metadata',
           transferId: transferId,
@@ -215,36 +211,33 @@ class PeerService {
           chunksCount: totalChunks,
           timestamp: Date.now()
         };
-
-        // 发送元数据(元数据始终使用JSON格式)
         const metadataStr = JSON.stringify(metadata);
 
         if (useEncryption && sharedSecret) {
-          // 加密模式
-          const encryptedMetadata = encryptionService.encrypt(metadataStr, sharedSecret);
+          const encryptedMetadata = await encryptionService.encrypt(metadataStr, sharedSecret);
           this.sendMessageSafely(connection, encryptedMetadata);
         } else {
-          // 非加密模式
           this.sendMessageSafely(connection, metadataStr);
         }
 
-        // 分块发送文件
-        for (let i = 0; i < totalChunks; i++) {
-          const start = i * CHUNK_SIZE;
-          const end = Math.min(start + CHUNK_SIZE, fileData.length);
-          const chunk = fileData.slice(start, end);
-
-          // 使用setTimeout错开发送时间，避免阻塞
-          setTimeout(() => {
-            this.sendFileChunk(connection, transferId, i, chunk, useEncryption, sharedSecret);
-          }, i * 50); // 每50毫秒发送一个块
-        }
+        // 顺序异步发送文件块（参考方案 1.2）
+        const sendChunksSequentially = async () => {
+          for (let i = 0; i < totalChunks; i++) {
+            const start = i * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, fileData.length);
+            const chunk = fileData.slice(start, end);
+            await this.sendFileChunk(connection, transferId, i, chunk, useEncryption, sharedSecret);
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+        };
+        sendChunksSequentially();
       } catch (error) {
         console.error('处理文件失败:', error);
         if (callbacks.onError) callbacks.onError(error);
         delete this.fileTransfers[transferId];
       }
     };
+
 
     reader.onerror = (error) => {
       console.error('读取文件失败:', error);
@@ -265,14 +258,13 @@ class PeerService {
    * @param {boolean} useEncryption - 是否使用加密
    * @param {string} sharedSecret - 共享密钥(加密模式下必须提供)
    */
-  sendFileChunk(connection, transferId, chunkIndex, chunkData, useEncryption, sharedSecret) {
+  async sendFileChunk(connection, transferId, chunkIndex, chunkData, useEncryption, sharedSecret) {
     try {
       if (!this.fileTransfers[transferId]) {
         console.error('文件传输状态不存在:', transferId);
         return;
       }
 
-      // 准备块数据
       const chunkMessage = {
         type: 'file-chunk',
         transferId: transferId,
@@ -281,76 +273,44 @@ class PeerService {
       };
 
       if (useEncryption && sharedSecret) {
-        // 加密模式
-        // 将二进制数据转换为Base64字符串
         const base64Data = this.arrayBufferToBase64(chunkData);
-
-        // 加密Base64字符串
-        const encryptedData = encryptionService.encryptRaw(base64Data, sharedSecret);
-
-        // 添加加密数据
+        const encryptedData = await encryptionService.encryptRaw(base64Data, sharedSecret);
+        // 将加密返回的对象序列化为字符串
         chunkMessage.encryptedData = encryptedData;
-
-        // 发送加密块
         this.sendMessageSafely(connection, JSON.stringify(chunkMessage));
       } else {
-        // 非加密模式 - 直接发送二进制数据
-        // 注意: 由于我们使用binary序列化，这里可以直接发送二进制数据
+        // 非加密模式——直接发送二进制数据
         const message = JSON.stringify(chunkMessage);
-
-        // 创建一个新的ArrayBuffer，包含消息头和块数据
         const messageBuffer = new TextEncoder().encode(message);
-        const combinedBuffer = new Uint8Array(messageBuffer.length + chunkData.length + 4);
-
-        // 写入消息头长度(4字节)
+        const combinedBuffer = new Uint8Array(messageBuffer.length + chunkData.byteLength + 4);
         const headerLength = messageBuffer.length;
         combinedBuffer[0] = (headerLength >> 24) & 0xFF;
         combinedBuffer[1] = (headerLength >> 16) & 0xFF;
         combinedBuffer[2] = (headerLength >> 8) & 0xFF;
         combinedBuffer[3] = headerLength & 0xFF;
-
-        // 写入消息头
         combinedBuffer.set(messageBuffer, 4);
-
-        // 写入块数据
-        combinedBuffer.set(chunkData, 4 + messageBuffer.length);
-
-        // 发送组合后的数据
+        combinedBuffer.set(new Uint8Array(chunkData), 4 + messageBuffer.length);
         this.sendMessageSafely(connection, combinedBuffer.buffer);
       }
 
-      // 更新已发送块数
       this.fileTransfers[transferId].sentChunks++;
-
-      // 计算进度
       const progress = (this.fileTransfers[transferId].sentChunks / this.fileTransfers[transferId].totalChunks) * 100;
-
-      // 调用进度回调
       if (this.fileTransfers[transferId].callbacks.onProgress) {
         this.fileTransfers[transferId].callbacks.onProgress(transferId, progress);
       }
 
-      // 检查是否所有块都已发送
       if (this.fileTransfers[transferId].sentChunks === this.fileTransfers[transferId].totalChunks) {
         console.log('文件传输完成:', transferId);
-
-        // 调用完成回调
         if (this.fileTransfers[transferId].callbacks.onComplete) {
           this.fileTransfers[transferId].callbacks.onComplete(transferId);
         }
-
-        // 清理传输状态
         delete this.fileTransfers[transferId];
       }
     } catch (error) {
       console.error('发送文件块失败:', error);
-
-      // 调用错误回调
       if (this.fileTransfers[transferId] && this.fileTransfers[transferId].callbacks.onError) {
         this.fileTransfers[transferId].callbacks.onError(error);
       }
-
-      // 清理传输状态
       delete this.fileTransfers[transferId];
     }
   }
@@ -387,7 +347,7 @@ class PeerService {
    * @param {string} sharedSecret - 共享密钥(加密模式下必须提供)
    * @param {object} callbacks - 回调函数集合
    */
-  handleStringData(data, useEncryption, sharedSecret, callbacks = {}) {
+  async handleStringData(data, useEncryption, sharedSecret, callbacks = {}) {
     try {
       // 尝试解析为JSON
       let jsonData;
@@ -423,21 +383,37 @@ class PeerService {
         // 文件元数据
         if (callbacks.onFileMetadata) callbacks.onFileMetadata(jsonData);
       } else if (jsonData.type === 'file-chunk') {
-        // 文件块
-        if (jsonData.encryptedData && useEncryption && sharedSecret) {
-          // 解密数据
-          const decryptedBase64 = encryptionService.decryptRaw(jsonData.encryptedData, sharedSecret);
-          const chunkData = this.base64ToArrayBuffer(decryptedBase64);
-
-          if (callbacks.onFileChunk) {
-            callbacks.onFileChunk(jsonData.transferId, jsonData.chunkIndex, chunkData, jsonData);
+        // 添加日志，检查接收到的文件块消息格式
+        console.log('处理文件块消息，jsonData:', jsonData);
+        try {
+          if (jsonData.encryptedData && useEncryption && window.sharedCryptoKey) {
+            let encryptedDataObj;
+            if (typeof jsonData.encryptedData === 'string') {
+              encryptedDataObj = JSON.parse(jsonData.encryptedData);
+            } else {
+              encryptedDataObj = jsonData.encryptedData;
+            }
+            const decryptedBase64 = await encryptionService.decryptRaw(encryptedDataObj, window.sharedCryptoKey);
+            if (!decryptedBase64) {
+              console.error('文件块解密返回为空');
+              return;
+            }
+            console.log('解密后的 base64 数据:', decryptedBase64);
+            const chunkData = encryptionService.utils.base64ToArrayBuffer(decryptedBase64);
+            console.log('转换后的 chunkData 长度:', chunkData.byteLength);
+            if (callbacks.onFileChunk) {
+              callbacks.onFileChunk(jsonData.transferId, jsonData.chunkIndex, chunkData, jsonData);
+            }
+            if (jsonData.isLastChunk && callbacks.onFileTransferComplete) {
+              callbacks.onFileTransferComplete(jsonData.transferId);
+            }
           }
-
-          if (jsonData.isLastChunk && callbacks.onFileTransferComplete) {
-            callbacks.onFileTransferComplete(jsonData.transferId);
-          }
+        } catch (error) {
+          console.error('文件块解密失败:', error);
         }
-      } else {
+        return;
+      }
+      else {
         // 其他消息
         if (callbacks.onMessage) callbacks.onMessage(jsonData);
       }

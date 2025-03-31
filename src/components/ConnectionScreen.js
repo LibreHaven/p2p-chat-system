@@ -416,6 +416,11 @@ const ConnectionScreen = ({
           console.log('处理密钥交换, 接收到的公钥长度:', data.publicKey.length);
           await window.encryptionState.processRemotePublicKey(data.publicKey);
           window.sharedCryptoKey = window.encryptionState.sharedSecret;
+          if (!window.sharedCryptoKey) {
+            console.error('密钥交换完成后，共享密钥仍不存在');
+            displayToast('加密通道建立失败，请重试');
+            return;
+          }
           console.log('密钥交换成功，共享密钥已保存');
           setEncryptionReady(true);
           sessionStorage.setItem('encryptionReady', 'true');

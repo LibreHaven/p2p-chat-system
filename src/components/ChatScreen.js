@@ -323,6 +323,7 @@ const ChatScreen = ({ connection, peerId, targetId, messages, setMessages, reset
   const imageInputRef = useRef(null);
   const videoInputRef = useRef(null);
   const fileChunksRef = useRef({});
+  const fileChunksBufferRef = useRef({}); // 新增：缓冲区
 
   useEffect(() => {
     activeConnectionRef.current = connection;
@@ -511,29 +512,61 @@ const ChatScreen = ({ connection, peerId, targetId, messages, setMessages, reset
 
   const handleMessage = async (data) => {
     console.log('处理消息:', data);
-    if (data.type === 'heartbeat' || data.type === 'heartbeat-response') return;
-    if (data.type === 'encryption-ready' || data.type === 'encryption-ready-response') return;
-    if (data.type === 'message') {
-      addMessageToList(data);
-      return;
-    }
+    // 排除心跳和加密就绪确认消息
+    if (data.type === 'heartbeat' || data.type === 'heartbeat-response' ||
+      data.type === 'encryption-ready' || data.type === 'encryption-ready-response') return;
+
     if (data.type === 'encrypted-message') {
-      if (!isEncryptionEnabled) {
-        console.log('接收到加密消息，但当前不启用加密，忽略');
-        return;
-      }
-      if (!window.sharedCryptoKey) {
-        console.error('共享密钥不存在，无法解密消息');
-        return;
-      }
       try {
         const decrypted = await encryptionService.decrypt(data, window.sharedCryptoKey);
+        if (!decrypted) {
+          console.error('解密返回为空，忽略此消息');
+          return;
+        }
         const messageObj = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
-        addMessageToList(messageObj);
+        // 如果解密后的消息类型为文件元数据，则调用 onFileMetadata 回调
+        if (messageObj.type === 'file-metadata') {
+          handleFileMetadata(messageObj);
+        } else {
+          addMessageToList(messageObj);
+        }
+        
       } catch (error) {
         console.error('解密失败:', error);
       }
+    } else if (data.type === 'file-chunk') {
+      // 确保只处理文件块消息，且使用 decryptRaw 进行解密
+      try {
+        if (data.encryptedData && isEncryptionEnabled && window.sharedCryptoKey) {
+          let encryptedDataObj;
+          if (typeof data.encryptedData === 'string') {
+            encryptedDataObj = JSON.parse(data.encryptedData);
+          } else {
+            encryptedDataObj = data.encryptedData;
+          }
+          const decryptedBase64 = await encryptionService.decryptRaw(encryptedDataObj, window.sharedCryptoKey);
+          if (!decryptedBase64) {
+            console.error('文件块解密返回为空');
+            return;
+          }
+          // 修改处：调用 utils 内的 base64ToArrayBuffer
+          const chunkData = encryptionService.utils.base64ToArrayBuffer(decryptedBase64);
+          // 调用文件块处理回调
+          if (callbacks.onFileChunk) {
+            callbacks.onFileChunk(data.transferId, data.chunkIndex, chunkData, data);
+          }
+          if (data.isLastChunk && callbacks.onFileTransferComplete) {
+            callbacks.onFileTransferComplete(data.transferId);
+          }
+        }
+      } catch (error) {
+        console.error('文件块解密失败:', error);
+      }
       return;
+    }
+    else {
+      // 其他非加密消息处理
+      addMessageToList(data);
     }
   };
 
@@ -615,11 +648,21 @@ const ChatScreen = ({ connection, peerId, targetId, messages, setMessages, reset
 
   const handleFileMetadata = (metadata) => {
     console.log('收到文件元数据:', metadata);
+    // 初始化传输状态
     fileChunksRef.current[metadata.transferId] = {
       metadata,
       chunks: new Array(metadata.chunksCount),
       receivedChunks: 0
     };
+    // 检查缓冲区中是否有先前收到的文件块，并合并到传输状态中
+    if (fileChunksBufferRef.current[metadata.transferId]) {
+      const bufferedChunks = fileChunksBufferRef.current[metadata.transferId];
+      Object.keys(bufferedChunks).forEach(index => {
+        fileChunksRef.current[metadata.transferId].chunks[index] = bufferedChunks[index];
+        fileChunksRef.current[metadata.transferId].receivedChunks++;
+      });
+      delete fileChunksBufferRef.current[metadata.transferId];
+    }
     const fileMsg = {
       id: Date.now(),
       sender: targetId,
@@ -638,10 +681,16 @@ const ChatScreen = ({ connection, peerId, targetId, messages, setMessages, reset
   };
 
   const handleFileChunk = (transferId, chunkIndex, chunkData, metadata) => {
+    // 如果当前传输状态不存在，则将该块存入缓冲区
     if (!fileChunksRef.current[transferId]) {
-      console.error('未找到文件传输状态:', transferId);
+      if (!fileChunksBufferRef.current[transferId]) {
+        fileChunksBufferRef.current[transferId] = {};
+      }
+      fileChunksBufferRef.current[transferId][chunkIndex] = chunkData;
+      console.warn('文件元数据尚未到达，缓冲文件块:', transferId, chunkIndex);
       return;
     }
+    // 正常处理文件块
     fileChunksRef.current[transferId].chunks[chunkIndex] = chunkData;
     fileChunksRef.current[transferId].receivedChunks++;
     const progress = (fileChunksRef.current[transferId].receivedChunks / fileChunksRef.current[transferId].metadata.chunksCount) * 100;
@@ -651,6 +700,7 @@ const ChatScreen = ({ connection, peerId, targetId, messages, setMessages, reset
     }));
   };
 
+
   const handleFileTransferComplete = (transferId) => {
     console.log('文件传输完成:', transferId);
     if (!fileChunksRef.current[transferId]) {
@@ -658,11 +708,27 @@ const ChatScreen = ({ connection, peerId, targetId, messages, setMessages, reset
       return;
     }
     const { metadata, chunks } = fileChunksRef.current[transferId];
-    const fileData = new Uint8Array(metadata.fileSize);
+    // 计算所有块的实际总长度
+    let totalLength = 0;
+    for (const chunk of chunks) {
+      if (!chunk || typeof chunk.byteLength !== 'number') {
+        console.error('缺少或无效的文件块，无法合并文件', transferId);
+        // 可考虑给出错误提示或清理该传输状态
+        return;
+      }
+      totalLength += chunk.byteLength;
+    }
+    const fileData = new Uint8Array(totalLength);
     let offset = 0;
     for (const chunk of chunks) {
-      fileData.set(new Uint8Array(chunk), offset);
-      offset += chunk.byteLength;
+      try {
+        const chunkArray = new Uint8Array(chunk);
+        fileData.set(chunkArray, offset);
+        offset += chunkArray.byteLength;
+      } catch (err) {
+        console.error('合并文件块失败:', err);
+        return;
+      }
     }
     const blob = new Blob([fileData], { type: metadata.fileType });
     const url = URL.createObjectURL(blob);
