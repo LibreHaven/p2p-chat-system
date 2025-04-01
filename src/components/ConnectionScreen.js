@@ -170,6 +170,7 @@ const ConnectionScreen = ({
   const [showConnectionRequest, setShowConnectionRequest] = useState(false);
   const [incomingConnection, setIncomingConnection] = useState(null);
   const [incomingPeerId, setIncomingPeerId] = useState('');
+  const [incomingUseEncryption, setIncomingUseEncryption] = useState(false);
   const [isPeerCreated, setIsPeerCreated] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
@@ -367,6 +368,8 @@ const ConnectionScreen = ({
       if (data.type === 'connection-request') {
         console.log('收到连接请求，来自:', data.peerId);
         if (data.useEncryption !== undefined) {
+          // 更新本地状态和 sessionStorage（主要以本地状态为准）
+          setIncomingUseEncryption(data.useEncryption);
           sessionStorage.setItem('useEncryption', data.useEncryption ? 'true' : 'false');
         }
         if (showConnectionRequest) {
@@ -511,7 +514,7 @@ const ConnectionScreen = ({
       return;
     }
     if (sessionStorage.getItem('encryptionReady') === 'sent' ||
-        sessionStorage.getItem('encryptionReady') === 'confirmed') {
+      sessionStorage.getItem('encryptionReady') === 'confirmed') {
       console.log('已经发送过加密就绪确认，不再重复发送');
       return;
     }
@@ -683,7 +686,7 @@ const ConnectionScreen = ({
           <ModalContent>
             <ModalTitle>连接请求</ModalTitle>
             <p>{incomingPeerId} 请求与你建立连接</p>
-            <p>加密通信: {sessionStorage.getItem('useEncryption') === 'true' ? '已启用' : '已禁用'}</p>
+            <p>加密通信: {incomingUseEncryption ? '已启用' : '已禁用'}</p>
             <ModalButtons>
               <AcceptButton onClick={acceptConnection}>
                 <FiCheck style={{ marginRight: '5px' }} />
