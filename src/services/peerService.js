@@ -349,51 +349,58 @@ class PeerService {
    */
   async handleStringData(data, useEncryption, sharedSecret, callbacks = {}) {
     try {
-      // 尝试解析为JSON
       let jsonData;
-
-      if (useEncryption && sharedSecret) {
-        // 加密模式 - 尝试解密
+      try {
+        // 先直接解析 JSON 数据
+        jsonData = JSON.parse(data);
+      } catch (e) {
+        // 如果解析失败，直接作为普通消息传递
+        if (callbacks.onMessage) {
+          callbacks.onMessage(data);
+        }
+        return;
+      }
+      
+      // 根据消息类型处理
+      if (jsonData.type === 'encrypted-message') {
+        // 仅对加密文字消息进行解密
         try {
-          const decryptedData = encryptionService.decrypt(JSON.parse(data), sharedSecret);
-          jsonData = JSON.parse(decryptedData);
-        } catch (error) {
-          // 解密失败，可能不是加密数据
-          try {
-            jsonData = JSON.parse(data);
-          } catch (e) {
-            // 不是JSON数据
-            if (callbacks.onMessage) callbacks.onMessage(data);
+          const decrypted = await encryptionService.decrypt(jsonData, sharedSecret);
+          if (!decrypted) {
+            console.error('解密返回为空，忽略此消息');
             return;
           }
-        }
-      } else {
-        // 非加密模式 - 直接解析
-        try {
-          jsonData = JSON.parse(data);
+          const messageObj = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
+          // 如果解密后的消息类型为文件元数据，则调用 onFileMetadata 回调
+          if (messageObj.type === 'file-metadata') {
+            if (callbacks.onFileMetadata) {
+              callbacks.onFileMetadata(messageObj);
+            }
+          } else {
+            if (callbacks.onMessage) {
+              callbacks.onMessage(messageObj);
+            }
+          }
         } catch (error) {
-          // 不是JSON数据
-          if (callbacks.onMessage) callbacks.onMessage(data);
-          return;
+          console.error('解密失败:', error);
         }
-      }
-
-      // 根据消息类型处理
-      if (jsonData.type === 'file-metadata') {
-        // 文件元数据
-        if (callbacks.onFileMetadata) callbacks.onFileMetadata(jsonData);
+      } else if (jsonData.type === 'file-metadata') {
+        // 文件元数据消息，直接处理
+        if (callbacks.onFileMetadata) {
+          callbacks.onFileMetadata(jsonData);
+        }
       } else if (jsonData.type === 'file-chunk') {
-        // 添加日志，检查接收到的文件块消息格式
+        // 文件块消息直接处理，不调用 decrypt()
         console.log('处理文件块消息，jsonData:', jsonData);
         try {
-          if (jsonData.encryptedData && useEncryption && window.sharedCryptoKey) {
+          if (jsonData.encryptedData && useEncryption && sharedSecret) {
             let encryptedDataObj;
             if (typeof jsonData.encryptedData === 'string') {
               encryptedDataObj = JSON.parse(jsonData.encryptedData);
             } else {
               encryptedDataObj = jsonData.encryptedData;
             }
-            const decryptedBase64 = await encryptionService.decryptRaw(encryptedDataObj, window.sharedCryptoKey);
+            const decryptedBase64 = await encryptionService.decryptRaw(encryptedDataObj, sharedSecret);
             if (!decryptedBase64) {
               console.error('文件块解密返回为空');
               return;
@@ -412,15 +419,16 @@ class PeerService {
           console.error('文件块解密失败:', error);
         }
         return;
-      }
-      else {
-        // 其他消息
-        if (callbacks.onMessage) callbacks.onMessage(jsonData);
+      } else {
+        // 其他消息类型直接处理
+        if (callbacks.onMessage) {
+          callbacks.onMessage(jsonData);
+        }
       }
     } catch (error) {
       console.error('处理字符串数据失败:', error);
     }
-  }
+  }  
 
   /**
    * 新增: 处理二进制数据
