@@ -1,6 +1,7 @@
 import Peer from 'peerjs';
 import { encryptionService } from './encryptionService';
 import CryptoJS from 'crypto-js';
+import { messageService } from './messageService';
 
 // 文件块大小设置为16KB，避免超出数据通道大小限制
 const CHUNK_SIZE = 16 * 1024; // 16KB
@@ -12,6 +13,17 @@ class PeerService {
     this.isReady = false;
     this.pendingMessages = [];
     this.fileTransfers = {};
+    
+    // 新增群组相关数据结构
+    this.groups = {};                    // 保存群组信息
+    this.groupConnections = {};          // 保存群组连接
+    this.groupMessages = {};             // 保存群组消息历史
+    this.pendingGroupInvites = {};       // 待处理的群组邀请
+    this.groupFileTransfers = {};        // 群组文件传输状态
+    this.processedGroupMessages = {};    // 已处理的群组消息ID（防重复）
+    this.keyUpdateStatus = {};           // 密钥更新状态
+    this.groupMonitoringIntervals = {};  // 群组监控定时器
+    this.groupHeartbeatIntervals = {};   // 群组心跳定时器
   }
 
   /**
@@ -507,9 +519,297 @@ class PeerService {
 
     return bytes.buffer;
   }
+
+  // 生成UUID (用于群组ID和消息ID)
+  generateUUID() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+
+  // 保存群组信息到本地存储
+  saveGroupsToStorage() {
+    try {
+      // 只保存基本信息，不保存连接对象
+      const groupsData = {};
+      
+      for (const [groupId, group] of Object.entries(this.groups)) {
+        groupsData[groupId] = {
+          id: group.id,
+          name: group.name,
+          type: group.type,
+          createdAt: group.createdAt,
+          owner: group.owner,
+          admins: group.admins,
+          members: group.members,
+          keyVersion: group.keyVersion,
+          settings: group.settings
+        };
+      }
+      
+      localStorage.setItem('p2p_groups', JSON.stringify(groupsData));
+    } catch (error) {
+      console.error('保存群组信息失败:', error);
+    }
+  }
+
+  // 从本地存储加载群组信息
+  loadGroupsFromStorage() {
+    try {
+      const groupsData = localStorage.getItem('p2p_groups');
+      if (groupsData) {
+        this.groups = JSON.parse(groupsData);
+      }
+    } catch (error) {
+      console.error('加载群组信息失败:', error);
+    }
+  }
+
+  // 创建群组
+  async createGroup(groupName, groupType, settings = {}) {
+    const groupId = this.generateUUID();
+    const group = {
+      id: groupId,
+      name: groupName,
+      type: groupType,
+      createdAt: Date.now(),
+      owner: this.peer.id,
+      admins: [],
+      members: [{
+        peerId: this.peer.id,
+        joinedAt: Date.now(),
+        role: "owner",
+        isSuperNode: true,
+        displayName: "我" // 或用户设置的名称
+      }],
+      keyVersion: 1,
+      settings: {
+        allowFiles: settings.allowFiles !== false,
+        encryptionEnabled: settings.encryptionEnabled !== false,
+        joinMode: settings.joinMode || "invite_only"
+      }
+    };
+    
+    // 生成群组共享密钥
+    if (group.settings.encryptionEnabled) {
+      await encryptionService.generateGroupSharedKey(groupId);
+    }
+    
+    // 保存群组信息
+    this.groups[groupId] = group;
+    
+    // 初始化群组消息历史
+    this.groupMessages[groupId] = [];
+    
+    // 保存到本地存储
+    this.saveGroupsToStorage();
+    
+    return group;
+  }
+
+  // 邀请成员加入群组
+  async inviteMemberToGroup(groupId, targetPeerId) {
+    const group = this.groups[groupId];
+    if (!group) throw new Error("群组不存在");
+    
+    // 检查权限
+    const currentMember = group.members.find(m => m.peerId === this.peer.id);
+    if (!currentMember || (currentMember.role !== "owner" && currentMember.role !== "admin")) {
+      throw new Error("只有群主或管理员可以邀请新成员");
+    }
+    
+    // 检查目标是否已经是成员
+    if (group.members.some(m => m.peerId === targetPeerId)) {
+      throw new Error("该用户已经是群组成员");
+    }
+    
+    try {
+      // 连接到目标Peer
+      const connection = await this.connectToPeer(targetPeerId);
+      
+      // 发送邀请
+      const invitation = {
+        type: "group-invite",
+        groupId: groupId,
+        groupName: group.name,
+        groupType: group.type,
+        inviter: this.peer.id,
+        inviterRole: currentMember.role,
+        timestamp: Date.now()
+      };
+      
+      await this.sendMessageSafely(connection, invitation);
+      
+      // 记录待处理邀请
+      this.pendingGroupInvites[groupId + "-" + targetPeerId] = {
+        connection,
+        timestamp: Date.now()
+      };
+      
+      return true;
+    } catch (error) {
+      console.error(`邀请成员 ${targetPeerId} 加入群组失败:`, error);
+      throw error;
+    }
+  }
+
+  // 处理成员接受群组邀请
+  async handleGroupInviteAccepted(groupId, memberId, connection) {
+    const group = this.groups[groupId];
+    if (!group) throw new Error("群组不存在");
+    
+    // 添加新成员到群组
+    const newMember = {
+      peerId: memberId,
+      joinedAt: Date.now(),
+      role: "member",
+      isSuperNode: false,
+      displayName: memberId.substring(0, 8) // 后续可以允许设置昵称
+    };
+    
+    group.members.push(newMember);
+    
+    // 如果启用了加密，发送群组密钥
+    if (group.settings.encryptionEnabled) {
+      try {
+        await this.distributeGroupKey(groupId, memberId, connection);
+      } catch (error) {
+        console.error(`向新成员 ${memberId} 分发群组密钥失败:`, error);
+      }
+    }
+    
+    // 保存群组更新
+    this.saveGroupsToStorage();
+    
+    // 发送成员列表和配置
+    const groupConfig = {
+      type: "group-config",
+      groupId,
+      groupData: {
+        id: group.id,
+        name: group.name,
+        type: group.type,
+        owner: group.owner,
+        admins: group.admins,
+        members: group.members,
+        keyVersion: group.keyVersion,
+        settings: group.settings
+      },
+      timestamp: Date.now()
+    };
+    
+    await this.sendMessageSafely(connection, groupConfig);
+    
+    // 广播新成员加入通知
+    this.broadcastGroupUpdate(groupId, {
+      type: "group-member-joined",
+      groupId,
+      peerId: memberId,
+      timestamp: Date.now()
+    });
+    
+    // 添加系统消息到群聊历史
+    this.addGroupSystemMessage(groupId, 'member_joined', {
+      memberId,
+      memberName: newMember.displayName
+    });
+    
+    // 建立与新成员的连接
+    this.establishGroupConnectionsForMember(groupId, memberId);
+    
+    return true;
+  }
+
+  // 为群组密钥分发
+  async distributeGroupKey(groupId, targetPeerId, connection) {
+    const groupKey = encryptionService.groupKeys[groupId];
+    if (!groupKey) throw new Error("找不到群组密钥");
+    
+    // 先与目标建立p2p加密
+    const keyExchangeMessage = {
+      type: "group-key-exchange-init",
+      groupId
+    };
+    
+    await this.sendMessageSafely(connection, keyExchangeMessage);
+    
+    // 实际实现中需要等待对方响应并建立加密通道
+    // 这里简化处理，假设加密通道已建立
+    
+    // 使用加密通道发送群组密钥
+    const groupKeyMessage = {
+      type: "group-key-distribution",
+      groupId,
+      keyData: groupKey.keyBase64,
+      keyVersion: groupKey.version
+    };
+    
+    await this.sendMessageSafely(connection, groupKeyMessage);
+    
+    return true;
+  }
+
+  // 添加群组系统消息
+  addGroupSystemMessage(groupId, action, metadata = {}) {
+    const systemMessage = messageService.createGroupMessage(
+      "", 
+      groupId,
+      "system",
+      {
+        systemAction: action,
+        ...metadata
+      },
+      "system"
+    );
+    
+    if (!this.groupMessages[groupId]) {
+      this.groupMessages[groupId] = [];
+    }
+    
+    this.groupMessages[groupId].push(systemMessage);
+    
+    return systemMessage;
+  }
+
+  // 广播群组更新
+  async broadcastGroupUpdate(groupId, message) {
+    const group = this.groups[groupId];
+    if (!group) return;
+    
+    // 简化版本，后续需要完善为按照网络拓扑的实现
+    const connections = {};
+    
+    // 获取所有已连接的群组成员
+    for (const member of group.members) {
+      if (member.peerId !== this.peer.id) {
+        const conn = this.getPeerConnection(member.peerId);
+        if (conn) {
+          connections[member.peerId] = conn;
+        }
+      }
+    }
+    
+    // 广播消息
+    for (const [peerId, connection] of Object.entries(connections)) {
+      try {
+        await this.sendMessageSafely(connection, message);
+      } catch (error) {
+        console.error(`向群组成员 ${peerId} 广播更新失败:`, error);
+      }
+    }
+    
+    return true;
+  }
+
+  // 获取单个Peer连接
+  getPeerConnection(peerId) {
+    // 在此处实现获取现有连接的逻辑
+    // 简化实现，实际情况需要从连接池中获取
+    return null; // 暂时返回null，后续实现
+  }
 }
 
-// 创建服务实例
 const peerServiceInstance = new PeerService();
 
 /**
@@ -530,7 +830,7 @@ const generateRandomId = () => {
  * @param {string} id - 用户ID
  * @returns {object} - Peer对象
  */
-const initializePeer = (id) => {
+peerServiceInstance.initializePeer = (id) => {
   try {
     // 使用指定的ID创建Peer对象
     const peer = new Peer(id, {
@@ -555,7 +855,7 @@ const initializePeer = (id) => {
  * @param {object} peer - Peer对象
  * @param {object} callbacks - 回调函数集合
  */
-const setupConnectionListeners = (peer, callbacks = {}) => {
+peerServiceInstance.setupConnectionListeners = (peer, callbacks = {}) => {
   if (!peer) return;
 
   // 移除所有现有监听器，防止重复绑定
@@ -606,7 +906,7 @@ const setupConnectionListeners = (peer, callbacks = {}) => {
  * @param {string} targetId - 目标用户ID
  * @returns {object} - 连接对象
  */
-const connectToPeer = (peer, targetId) => {
+peerServiceInstance.connectToPeer = (peer, targetId) => {
   if (!peer) return null;
 
   try {
@@ -632,7 +932,7 @@ const connectToPeer = (peer, targetId) => {
  * @param {object} conn - 连接对象
  * @param {object} callbacks - 回调函数集合
  */
-const setupDataConnectionListeners = (conn, callbacks = {}) => {
+peerServiceInstance.setupDataConnectionListeners = (conn, callbacks = {}) => {
   if (!conn) return;
 
   // 移除所有现有监听器，防止重复绑定
@@ -699,7 +999,7 @@ const setupDataConnectionListeners = (conn, callbacks = {}) => {
  * @param {object} conn - 连接对象
  * @returns {string} - 连接状态
  */
-const checkConnectionStatus = (conn) => {
+peerServiceInstance.checkConnectionStatus = (conn) => {
   if (!conn) {
     return 'disconnected';
   }
@@ -724,23 +1024,13 @@ const checkConnectionStatus = (conn) => {
 };
 
 /**
- * 安全发送消息 - 为保持与原有代码的兼容性而添加
- * @param {object} conn - 连接对象
- * @param {any} message - 要发送的消息
- * @returns {boolean} - 是否成功发送
- */
-const sendMessageSafely = (conn, message) => {
-  return peerServiceInstance.sendMessageSafely(conn, message);
-};
-
-/**
  * 重新建立连接 - 为保持与原有代码的兼容性而添加
  * @param {object} peer - Peer对象
  * @param {string} targetId - 目标用户ID
  * @param {object} callbacks - 回调函数集合
  * @returns {object} - 连接对象
  */
-const reestablishConnection = (peer, targetId, callbacks = {}) => {
+peerServiceInstance.reestablishConnection = (peer, targetId, callbacks = {}) => {
   if (!peer || !targetId) {
     return null;
   }
@@ -749,10 +1039,10 @@ const reestablishConnection = (peer, targetId, callbacks = {}) => {
 
   try {
     // 连接到目标Peer
-    const conn = connectToPeer(peer, targetId);
+    const conn = peerServiceInstance.connectToPeer(peer, targetId);
 
     // 设置数据连接监听器
-    setupDataConnectionListeners(conn, callbacks);
+    peerServiceInstance.setupDataConnectionListeners(conn, callbacks);
 
     return conn;
   } catch (error) {
@@ -761,41 +1051,8 @@ const reestablishConnection = (peer, targetId, callbacks = {}) => {
   }
 };
 
-/**
- * 发送文件 - 为保持与原有代码的兼容性而添加
- * @param {object} conn - 连接对象
- * @param {File} file - 要发送的文件
- * @param {boolean} useEncryption - 是否使用加密
- * @param {string} sharedSecret - 共享密钥(加密模式下必须提供)
- * @param {object} callbacks - 回调函数集合
- */
-const sendFile = (conn, file, useEncryption, sharedSecret, callbacks = {}) => {
-  return peerServiceInstance.sendFile(conn, file, useEncryption, sharedSecret, callbacks);
-};
+// 其他兼容性函数可以根据需要添加
 
-/**
- * 处理接收到的数据 - 为保持与原有代码的兼容性而添加
- * @param {any} data - 接收到的数据
- * @param {boolean} useEncryption - 是否使用加密
- * @param {string} sharedSecret - 共享密钥(加密模式下必须提供)
- * @param {object} callbacks - 回调函数集合
- */
-const handleReceivedData = (data, useEncryption, sharedSecret, callbacks = {}) => {
-  return peerServiceInstance.handleReceivedData(data, useEncryption, sharedSecret, callbacks);
-};
-
-// 导出服务
-const peerService = {
-  generateRandomId,
-  initializePeer,
-  setupConnectionListeners,
-  connectToPeer,
-  setupDataConnectionListeners,
-  checkConnectionStatus,
-  sendMessageSafely,
-  reestablishConnection,
-  sendFile,
-  handleReceivedData
-};
-
-export default peerService;
+// 支持两种导出方式
+export default peerServiceInstance;
+export const peerService = peerServiceInstance;

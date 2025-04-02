@@ -286,6 +286,178 @@ class EncryptionState {
   }
 }
 
+// 群聊密钥管理
+const groupKeys = {};
+
+// 生成群组共享密钥
+const generateGroupSharedKey = async (groupId) => {
+  try {
+    // 生成随机AES-GCM密钥
+    const key = await window.crypto.subtle.generateKey(
+      { name: "AES-GCM", length: 256 },
+      true,
+      ["encrypt", "decrypt"]
+    );
+    
+    // 导出密钥（用于分发）
+    const exportedKey = await window.crypto.subtle.exportKey("raw", key);
+    const keyBase64 = utils.arrayBufferToBase64(exportedKey);
+    
+    // 存储密钥
+    groupKeys[groupId] = {
+      key,
+      keyBase64,
+      version: 1,
+      createdAt: Date.now()
+    };
+    
+    return {
+      version: 1,
+      keyData: keyBase64
+    };
+  } catch (error) {
+    console.error("生成群组共享密钥失败:", error);
+    throw error;
+  }
+};
+
+// 导入群组共享密钥
+const importGroupSharedKey = async (groupId, keyData, keyVersion) => {
+  try {
+    const keyBuffer = utils.base64ToArrayBuffer(keyData);
+    
+    // 导入密钥
+    const key = await window.crypto.subtle.importKey(
+      "raw",
+      keyBuffer,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt", "decrypt"]
+    );
+    
+    // 存储密钥
+    groupKeys[groupId] = {
+      key,
+      keyBase64: keyData,
+      version: keyVersion,
+      createdAt: Date.now()
+    };
+    
+    return true;
+  } catch (error) {
+    console.error("导入群组共享密钥失败:", error);
+    throw error;
+  }
+};
+
+// 加密群组消息
+const encryptGroupMessage = async (message, groupId, keyVersion) => {
+  try {
+    const groupKey = groupKeys[groupId];
+    if (!groupKey) throw new Error("找不到群组密钥");
+    if (groupKey.version !== keyVersion) throw new Error("密钥版本不匹配");
+    
+    const messageString = typeof message === 'object' ? JSON.stringify(message) : message;
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const messageBuffer = utils.stringToArrayBuffer(messageString);
+    
+    const encryptedBuffer = await window.crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, tagLength: 128 },
+      groupKey.key,
+      messageBuffer
+    );
+    
+    const encryptedBase64 = utils.arrayBufferToBase64(encryptedBuffer);
+    const ivBase64 = utils.arrayBufferToBase64(iv);
+    
+    return {
+      type: 'encrypted-group-message',
+      groupId,
+      keyVersion,
+      iv: ivBase64,
+      ciphertext: encryptedBase64
+    };
+  } catch (error) {
+    console.error("加密群组消息失败:", error);
+    throw error;
+  }
+};
+
+// 解密群组消息
+const decryptGroupMessage = async (encryptedData, groupId) => {
+  try {
+    const groupKey = groupKeys[groupId];
+    if (!groupKey) throw new Error("找不到群组密钥");
+    if (groupKey.version !== encryptedData.keyVersion) throw new Error("密钥版本不匹配");
+    
+    const iv = utils.base64ToArrayBuffer(encryptedData.iv);
+    const ciphertext = utils.base64ToArrayBuffer(encryptedData.ciphertext);
+    
+    const decryptedBuffer = await window.crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: new Uint8Array(iv), tagLength: 128 },
+      groupKey.key,
+      ciphertext
+    );
+    
+    const decryptedString = utils.arrayBufferToString(decryptedBuffer);
+    return JSON.parse(decryptedString);
+  } catch (error) {
+    console.error("解密群组消息失败:", error);
+    throw error;
+  }
+};
+
+// 为文件加密而设计的原始数据加密
+const encryptRawForGroup = async (data, groupId, keyVersion) => {
+  try {
+    const groupKey = groupKeys[groupId];
+    if (!groupKey) throw new Error("找不到群组密钥");
+    if (groupKey.version !== keyVersion) throw new Error("密钥版本不匹配");
+    
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    
+    const encryptedBuffer = await window.crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, tagLength: 128 },
+      groupKey.key,
+      data
+    );
+    
+    // 组合IV和密文
+    const result = new Uint8Array(iv.length + encryptedBuffer.byteLength);
+    result.set(iv, 0);
+    result.set(new Uint8Array(encryptedBuffer), iv.length);
+    
+    return result;
+  } catch (error) {
+    console.error("加密原始数据失败:", error);
+    throw error;
+  }
+};
+
+// 解密原始数据
+const decryptRawForGroup = async (encryptedData, groupId, keyVersion) => {
+  try {
+    const groupKey = groupKeys[groupId];
+    if (!groupKey) throw new Error("找不到群组密钥");
+    if (groupKey.version !== keyVersion) throw new Error("密钥版本不匹配");
+    
+    // 提取IV和密文
+    const iv = encryptedData.slice(0, 12);
+    const ciphertext = encryptedData.slice(12);
+    
+    const decryptedBuffer = await window.crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv, tagLength: 128 },
+      groupKey.key,
+      ciphertext
+    );
+    
+    return new Uint8Array(decryptedBuffer);
+  } catch (error) {
+    console.error("解密原始数据失败:", error);
+    throw error;
+  }
+};
+
 export const encryptionService = {
   generateKeyPair,
   exportPublicKey,
@@ -297,5 +469,12 @@ export const encryptionService = {
   decryptRaw,
   createKeyExchangeMessage,
   EncryptionState,
-  utils
+  utils,
+  generateGroupSharedKey,
+  importGroupSharedKey,
+  encryptGroupMessage,
+  decryptGroupMessage,
+  encryptRawForGroup,
+  decryptRawForGroup,
+  groupKeys
 };
