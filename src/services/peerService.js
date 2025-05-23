@@ -824,7 +824,7 @@ const generateRandomId = () => {
   }
   return result;
 };
-
+peerServiceInstance.generateRandomId = generateRandomId;
 /**
  * 初始化 Peer 连接 - 为保持与原有代码的兼容性而添加
  * @param {string} id - 用户ID
