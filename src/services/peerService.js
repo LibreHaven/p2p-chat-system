@@ -13,7 +13,7 @@ class PeerService {
     this.isReady = false;
     this.pendingMessages = [];
     this.fileTransfers = {};
-    
+
     // 新增群组相关数据结构
     this.groups = {};                    // 保存群组信息
     this.groupConnections = {};          // 保存群组连接
@@ -372,7 +372,7 @@ class PeerService {
         }
         return;
       }
-      
+
       // 根据消息类型处理
       if (jsonData.type === 'encrypted-message') {
         // 仅对加密文字消息进行解密
@@ -440,7 +440,7 @@ class PeerService {
     } catch (error) {
       console.error('处理字符串数据失败:', error);
     }
-  }  
+  }
 
   /**
    * 新增: 处理二进制数据
@@ -522,7 +522,7 @@ class PeerService {
 
   // 生成UUID (用于群组ID和消息ID)
   generateUUID() {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
       const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
       return v.toString(16);
     });
@@ -533,7 +533,7 @@ class PeerService {
     try {
       // 只保存基本信息，不保存连接对象
       const groupsData = {};
-      
+
       for (const [groupId, group] of Object.entries(this.groups)) {
         groupsData[groupId] = {
           id: group.id,
@@ -547,7 +547,7 @@ class PeerService {
           settings: group.settings
         };
       }
-      
+
       localStorage.setItem('p2p_groups', JSON.stringify(groupsData));
     } catch (error) {
       console.error('保存群组信息失败:', error);
@@ -590,21 +590,21 @@ class PeerService {
         joinMode: settings.joinMode || "invite_only"
       }
     };
-    
+
     // 生成群组共享密钥
     if (group.settings.encryptionEnabled) {
       await encryptionService.generateGroupSharedKey(groupId);
     }
-    
+
     // 保存群组信息
     this.groups[groupId] = group;
-    
+
     // 初始化群组消息历史
     this.groupMessages[groupId] = [];
-    
+
     // 保存到本地存储
     this.saveGroupsToStorage();
-    
+
     return group;
   }
 
@@ -612,22 +612,22 @@ class PeerService {
   async inviteMemberToGroup(groupId, targetPeerId) {
     const group = this.groups[groupId];
     if (!group) throw new Error("群组不存在");
-    
+
     // 检查权限
     const currentMember = group.members.find(m => m.peerId === this.peer.id);
     if (!currentMember || (currentMember.role !== "owner" && currentMember.role !== "admin")) {
       throw new Error("只有群主或管理员可以邀请新成员");
     }
-    
+
     // 检查目标是否已经是成员
     if (group.members.some(m => m.peerId === targetPeerId)) {
       throw new Error("该用户已经是群组成员");
     }
-    
+
     try {
       // 连接到目标Peer
       const connection = await this.connectToPeer(targetPeerId);
-      
+
       // 发送邀请
       const invitation = {
         type: "group-invite",
@@ -638,15 +638,15 @@ class PeerService {
         inviterRole: currentMember.role,
         timestamp: Date.now()
       };
-      
+
       await this.sendMessageSafely(connection, invitation);
-      
+
       // 记录待处理邀请
       this.pendingGroupInvites[groupId + "-" + targetPeerId] = {
         connection,
         timestamp: Date.now()
       };
-      
+
       return true;
     } catch (error) {
       console.error(`邀请成员 ${targetPeerId} 加入群组失败:`, error);
@@ -658,7 +658,7 @@ class PeerService {
   async handleGroupInviteAccepted(groupId, memberId, connection) {
     const group = this.groups[groupId];
     if (!group) throw new Error("群组不存在");
-    
+
     // 添加新成员到群组
     const newMember = {
       peerId: memberId,
@@ -667,9 +667,9 @@ class PeerService {
       isSuperNode: false,
       displayName: memberId.substring(0, 8) // 后续可以允许设置昵称
     };
-    
+
     group.members.push(newMember);
-    
+
     // 如果启用了加密，发送群组密钥
     if (group.settings.encryptionEnabled) {
       try {
@@ -678,10 +678,10 @@ class PeerService {
         console.error(`向新成员 ${memberId} 分发群组密钥失败:`, error);
       }
     }
-    
+
     // 保存群组更新
     this.saveGroupsToStorage();
-    
+
     // 发送成员列表和配置
     const groupConfig = {
       type: "group-config",
@@ -698,9 +698,9 @@ class PeerService {
       },
       timestamp: Date.now()
     };
-    
+
     await this.sendMessageSafely(connection, groupConfig);
-    
+
     // 广播新成员加入通知
     this.broadcastGroupUpdate(groupId, {
       type: "group-member-joined",
@@ -708,16 +708,16 @@ class PeerService {
       peerId: memberId,
       timestamp: Date.now()
     });
-    
+
     // 添加系统消息到群聊历史
     this.addGroupSystemMessage(groupId, 'member_joined', {
       memberId,
       memberName: newMember.displayName
     });
-    
+
     // 建立与新成员的连接
     this.establishGroupConnectionsForMember(groupId, memberId);
-    
+
     return true;
   }
 
@@ -725,18 +725,18 @@ class PeerService {
   async distributeGroupKey(groupId, targetPeerId, connection) {
     const groupKey = encryptionService.groupKeys[groupId];
     if (!groupKey) throw new Error("找不到群组密钥");
-    
+
     // 先与目标建立p2p加密
     const keyExchangeMessage = {
       type: "group-key-exchange-init",
       groupId
     };
-    
+
     await this.sendMessageSafely(connection, keyExchangeMessage);
-    
+
     // 实际实现中需要等待对方响应并建立加密通道
     // 这里简化处理，假设加密通道已建立
-    
+
     // 使用加密通道发送群组密钥
     const groupKeyMessage = {
       type: "group-key-distribution",
@@ -744,16 +744,16 @@ class PeerService {
       keyData: groupKey.keyBase64,
       keyVersion: groupKey.version
     };
-    
+
     await this.sendMessageSafely(connection, groupKeyMessage);
-    
+
     return true;
   }
 
   // 添加群组系统消息
   addGroupSystemMessage(groupId, action, metadata = {}) {
     const systemMessage = messageService.createGroupMessage(
-      "", 
+      "",
       groupId,
       "system",
       {
@@ -762,13 +762,13 @@ class PeerService {
       },
       "system"
     );
-    
+
     if (!this.groupMessages[groupId]) {
       this.groupMessages[groupId] = [];
     }
-    
+
     this.groupMessages[groupId].push(systemMessage);
-    
+
     return systemMessage;
   }
 
@@ -776,10 +776,10 @@ class PeerService {
   async broadcastGroupUpdate(groupId, message) {
     const group = this.groups[groupId];
     if (!group) return;
-    
+
     // 简化版本，后续需要完善为按照网络拓扑的实现
     const connections = {};
-    
+
     // 获取所有已连接的群组成员
     for (const member of group.members) {
       if (member.peerId !== this.peer.id) {
@@ -789,7 +789,7 @@ class PeerService {
         }
       }
     }
-    
+
     // 广播消息
     for (const [peerId, connection] of Object.entries(connections)) {
       try {
@@ -798,7 +798,7 @@ class PeerService {
         console.error(`向群组成员 ${peerId} 广播更新失败:`, error);
       }
     }
-    
+
     return true;
   }
 
@@ -832,11 +832,16 @@ peerServiceInstance.generateRandomId = generateRandomId;
  */
 peerServiceInstance.initializePeer = (id) => {
   try {
-    // 使用指定的ID创建Peer对象
     const peer = new Peer(id, {
-      debug: 2, // 调试级别
+      // ★ 指定公共 PeerJS Server
+      host: '0.peerjs.com',
+      port: 443,
+      secure: true,
+      key: 'peerjs',
+
+      debug: 2,
       config: {
-        'iceServers': [
+        iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:global.stun.twilio.com:3478' }
         ]
