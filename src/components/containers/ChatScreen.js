@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import styled from 'styled-components';
 import { FiSend, FiLoader, FiRefreshCw, FiFile, FiImage, FiVideo, FiX } from 'react-icons/fi';
-import { encryptionService } from '../services/encryptionService';
-import peerService from '../services/peerService';
-import messageService from '../services/messageService';
+import { encryptionService } from '../../services/encryption';
+import peerService from '../../services/peer';
+import messageService from '../../services/message';
 import CryptoJS from 'crypto-js';
 
 const ChatContainer = styled.div`

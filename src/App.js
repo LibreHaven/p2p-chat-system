@@ -1,17 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
-import ConnectionScreen from './components/ConnectionScreen';
-import ChatScreen from './components/ChatScreen';
-import ErrorScreen from './components/ErrorScreen';
-import SidebarNav from './components/SidebarNav';
-import CreateGroupModal from './components/CreateGroupModal';
-import JoinGroupModal from './components/JoinGroupModal';
-import GroupChatScreen from './components/GroupChatScreen';
-import GroupManagementScreen from './components/GroupManagementScreen';
-import GroupConfirmation from './components/GroupConfirmation';
-import InviteMemberModal from './components/InviteMemberModal';
-import { peerService } from './services/peerService';
-import { messageService } from './services/messageService';
+import ConnectionScreen from './components/containers/ConnectionScreen';
+import ChatScreen from './components/containers/ChatScreen';
+import ErrorScreen from './components/pure/ErrorScreen';
+import SidebarNav from './components/containers/SidebarNav';
+import CreateGroupModal from './components/pure/CreateGroupModal';
+import JoinGroupModal from './components/pure/JoinGroupModal';
+import GroupChatScreen from './components/containers/GroupChatScreen';
+import GroupManagementScreen from './components/containers/GroupManagementScreen';
+import GroupConfirmation from './components/pure/GroupConfirmation';
+import InviteMemberModal from './components/pure/InviteMemberModal';
+import peerService from './services/peer';
+import messageService from './services/message';
 
 const AppContainer = styled.div`
   display: flex;

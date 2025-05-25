@@ -1,6 +1,6 @@
-import { peerService } from '../services/peerService';
-import { encryptionService } from '../services/encryptionService';
-import messageService from '../services/messageService';
+import { peerService } from '../services/peer';
+import { encryptionService } from '../services/encryption';
+import messageService from '../services/message';
 
 // 模拟群组数据
 const mockGroup = {

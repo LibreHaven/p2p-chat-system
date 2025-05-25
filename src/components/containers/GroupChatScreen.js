@@ -1,10 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import styled from 'styled-components';
 import { FiSend, FiImage, FiFile, FiVideo, FiArrowLeft, FiSettings, FiInfo } from 'react-icons/fi';
-import messageService from '../services/messageService';
-
-// 成员列表组件将在下一步实现，这里暂时导入一个占位符
-import MembersList from './MembersList';
+import messageService from '../../services/message';
+import MembersList from '../pure/MembersList';
 
 const GroupChatContainer = styled.div`
   display: flex;
