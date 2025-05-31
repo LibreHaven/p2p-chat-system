@@ -416,22 +416,40 @@ const useConnection = ({
   
   // 拒绝连接
   const rejectIncomingConnection = useCallback(() => {
-    if (incomingConnection) {
+    const connectionToReject = incomingConnection || currentIncomingConnectionRef.current;
+    
+    if (connectionToReject) {
       console.log('拒绝连接请求');
-      peerService.sendMessageSafely(incomingConnection, {
-        type: 'connection-rejected',
-        timestamp: Date.now()
-      });
       
-      incomingConnection.close();
-      setShowConnectionRequest(false);
+      try {
+        peerService.sendMessageSafely(connectionToReject, {
+          type: 'connection-rejected',
+          timestamp: Date.now()
+        });
+      } catch (error) {
+        console.warn('发送拒绝消息失败:', error);
+      }
+      
+      try {
+        connectionToReject.close();
+      } catch (error) {
+        console.warn('关闭连接失败:', error);
+      }
+      
       // 清理连接状态
+      setShowConnectionRequest(false);
       currentIncomingConnectionRef.current = null;
       setIncomingConnection(null);
       setIncomingPeerId('');
       setIncomingUseEncryption(false);
+      
+      onDisplayToast('已拒绝连接请求');
+    } else {
+      console.warn('没有找到要拒绝的连接');
+      // 即使没有连接也要关闭弹窗
+      setShowConnectionRequest(false);
     }
-  }, [incomingConnection]);
+  }, [incomingConnection, onDisplayToast]);
   
   // 清理函数
   useEffect(() => {
