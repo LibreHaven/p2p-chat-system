@@ -1,13 +1,15 @@
-import React from 'react';
+import React, { memo } from 'react';
 import styled from 'styled-components';
+import { Card as AntCard, Typography } from 'antd';
 
-const BubbleContainer = styled.div`
+const { Text } = Typography;
+
+const StyledCard = styled(AntCard)`
   max-width: 70%;
-  padding: 10px 15px;
+  margin-bottom: 8px;
   border-radius: 18px;
   position: relative;
   word-wrap: break-word;
-  margin-bottom: 8px;
   
   ${props => props.$isSelf ? `
     align-self: flex-end;
@@ -19,13 +21,13 @@ const BubbleContainer = styled.div`
     border-bottom-left-radius: 5px;
   `}
   
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-`;
-
-const MessageText = styled.div`
-  font-size: 15px;
-  color: #303030;
-  white-space: pre-wrap;
+  .ant-card-body {
+    padding: 10px 15px;
+  }
+  
+  .ant-card-bordered {
+    border: none;
+  }
 `;
 
 const MessageTime = styled.span`
@@ -36,7 +38,8 @@ const MessageTime = styled.span`
   text-align: right;
 `;
 
-const MessageBubble = ({ message, isSelf }) => {
+// 使用memo优化消息气泡组件
+const MessageBubble = memo(({ message, isOwn }) => {
   // 格式化时间戳
   const formatTime = (timestamp) => {
     const date = new Date(timestamp);
@@ -44,11 +47,13 @@ const MessageBubble = ({ message, isSelf }) => {
   };
 
   return (
-    <BubbleContainer $isSelf={isSelf}>
-      <MessageText>{message.text}</MessageText>
+    <StyledCard $isSelf={isSelf} size="small" bordered={false}>
+      <Text style={{ fontSize: '15px', color: '#303030', whiteSpace: 'pre-wrap' }}>
+        {message.text}
+      </Text>
       <MessageTime>{formatTime(message.timestamp)}</MessageTime>
-    </BubbleContainer>
+    </StyledCard>
   );
-};
+});
 
 export default MessageBubble;

@@ -29,7 +29,9 @@
     "webpack-dev-server": "^5.2.0"
   },
   "dependencies": {
+    "antd": "^5.25.4",
     "crypto-js": "^4.2.0",
+    "p2p-chat-system": "file:",
     "peerjs": "^1.5.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

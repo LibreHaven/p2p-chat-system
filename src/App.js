@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import styled from 'styled-components';
-import ConnectionScreen from './components/ConnectionScreen';
-import ChatScreen from './components/ChatScreen';
-import ErrorScreen from './components/ErrorScreen';
+import { ConfigProvider } from 'antd';
+import ErrorBoundary from './components/ErrorBoundary';
+import ConnectionContainer from './containers/ConnectionContainer';
+import ChatScreenContainer from './containers/ChatScreenContainer';
+import ErrorScreenContainer from './containers/ErrorScreenContainer';
 
 const AppContainer = styled.div`
   display: flex;
@@ -17,15 +19,13 @@ function App() {
   const [peerId, setPeerId] = useState('');
   const [targetId, setTargetId] = useState('');
   const [connection, setConnection] = useState(null);
-  const [connectionStatus, setConnectionStatus] = useState('disconnected'); // disconnected, connecting, connected, failed
+  const [useEncryption, setUseEncryption] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
-  const [messages, setMessages] = useState([]);
 
   // Reset to connection screen
   const resetConnection = () => {
     setScreen('connection');
     setTargetId('');
-    setConnectionStatus('disconnected');
     setErrorMessage('');
     if (connection) {
       connection.close();
@@ -33,46 +33,66 @@ function App() {
     }
   };
 
+  // Handle successful connection
+  const handleConnectionSuccess = (conn, targetPeerId, encryption) => {
+    setConnection(conn);
+    setTargetId(targetPeerId);
+    setUseEncryption(encryption);
+    setScreen('chat');
+  };
+
+  // Handle connection error
+  const handleConnectionError = (error) => {
+    setErrorMessage(error);
+    setScreen('error');
+  };
+
+  const antdTheme = {
+    token: {
+      colorPrimary: '#4a90e2',
+      borderRadius: 4,
+      colorBgContainer: '#ffffff',
+      colorBgLayout: '#f5f5f5',
+    },
+  };
+
   return (
-    <AppContainer>
-      {screen === 'connection' && (
-        <ConnectionScreen 
-          peerId={peerId}
-          setPeerId={setPeerId}
-          targetId={targetId}
-          setTargetId={setTargetId}
-          connectionStatus={connectionStatus}
-          setConnectionStatus={setConnectionStatus}
-          setConnection={setConnection}
-          setScreen={setScreen}
-          setErrorMessage={setErrorMessage}
-          setMessages={setMessages}
-        />
-      )}
-      
-      {screen === 'chat' && (
-        <ChatScreen 
-          peerId={peerId}
-          targetId={targetId}
-          connection={connection}
-          messages={messages}
-          setMessages={setMessages}
-          resetConnection={resetConnection}
-        />
-      )}
-      
-      {screen === 'error' && (
-        <ErrorScreen 
-          errorMessage={errorMessage}
-          resetConnection={resetConnection}
-          targetId={targetId}
-          setConnectionStatus={setConnectionStatus}
-          setConnection={setConnection}
-          setScreen={setScreen}
-          setErrorMessage={setErrorMessage}
-        />
-      )}
-    </AppContainer>
+    <ConfigProvider theme={antdTheme}>
+      <ErrorBoundary>
+        <AppContainer>
+          {screen === 'connection' && (
+            <ConnectionContainer
+              peerId={peerId}
+              setPeerId={setPeerId}
+              onConnectionSuccess={handleConnectionSuccess}
+              onConnectionError={handleConnectionError}
+            />
+          )}
+          
+          {screen === 'chat' && (
+            <ChatScreenContainer
+              peerId={peerId}
+              targetId={targetId}
+              connection={connection}
+              useEncryption={useEncryption}
+              onDisconnect={resetConnection}
+            />
+          )}
+          
+          {screen === 'error' && (
+            <ErrorScreenContainer
+              errorMessage={errorMessage}
+              targetId={targetId}
+              onRetryConnection={() => {
+                setScreen('connection');
+                setErrorMessage('');
+              }}
+              setErrorMessage={setErrorMessage}
+            />
+          )}
+        </AppContainer>
+      </ErrorBoundary>
+    </ConfigProvider>
   );
 }
 

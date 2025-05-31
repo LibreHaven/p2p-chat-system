@@ -1,6 +1,9 @@
 import React from 'react';
 import styled from 'styled-components';
+import { Typography, message } from 'antd';
 import { FiCopy } from 'react-icons/fi';
+
+const { Text } = Typography;
 
 const Container = styled.div`
   display: flex;
@@ -52,22 +55,28 @@ const CopyNotification = styled.div`
 `;
 
 const CopyableId = ({ id, onCopy }) => {
-  const [showCopied, setShowCopied] = React.useState(false);
-  
   const handleCopy = () => {
-    navigator.clipboard.writeText(id);
-    setShowCopied(true);
-    setTimeout(() => setShowCopied(false), 2000);
+    message.success('已复制到剪贴板!');
     if (onCopy) onCopy();
   };
   
   return (
-    <Container style={{ position: 'relative' }}>
-      <CopyNotification $visible={showCopied}>已复制到剪贴板!</CopyNotification>
-      <IdText>{id}</IdText>
-      <CopyButton onClick={handleCopy} title="复制到剪贴板">
-        <FiCopy />
-      </CopyButton>
+    <Container>
+      <Text 
+        copyable={{
+          text: id,
+          onCopy: handleCopy,
+          icon: <FiCopy />,
+          tooltips: ['复制到剪贴板', '已复制!']
+        }}
+        style={{
+          fontFamily: 'monospace',
+          fontSize: '16px',
+          flex: 1
+        }}
+      >
+        {id}
+      </Text>
     </Container>
   );
 };

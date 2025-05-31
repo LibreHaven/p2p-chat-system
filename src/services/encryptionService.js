@@ -107,7 +107,7 @@ const deriveSharedSecret = async (privateKey, publicKey) => {
       { name: 'ECDH', public: publicKey },
       privateKey,
       { name: 'AES-GCM', length: 256 },
-      false,
+      true,
       ['encrypt', 'decrypt']
     );
     console.log('Shared secret key derived successfully');
@@ -121,7 +121,7 @@ const deriveSharedSecret = async (privateKey, publicKey) => {
 const encrypt = async (message, sharedKey) => {
   try {
     const messageString = typeof message === 'object' ? JSON.stringify(message) : message;
-    console.log('Encrypting message...');
+    console.log('开始加密消息，数据长度:', messageString.length);
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
     const messageBuffer = utils.stringToArrayBuffer(messageString);
     const encryptedBuffer = await window.crypto.subtle.encrypt(
@@ -131,8 +131,9 @@ const encrypt = async (message, sharedKey) => {
     );
     const encryptedBase64 = utils.arrayBufferToBase64(encryptedBuffer);
     const ivBase64 = utils.arrayBufferToBase64(iv);
-    console.log('Message encrypted successfully');
-    return { type: 'encrypted-message', iv: ivBase64, ciphertext: encryptedBase64 };
+    const result = { type: 'encrypted-message', iv: ivBase64, ciphertext: encryptedBase64 };
+    console.log('加密完成，IV长度:', result.iv.length, 'Ciphertext长度:', result.ciphertext.length);
+    return result;
   } catch (error) {
     console.error('Encryption failed:', error);
     throw error;
@@ -141,6 +142,9 @@ const encrypt = async (message, sharedKey) => {
 
 export const decrypt = async (encryptedData, sharedKey) => {
   try {
+    console.log('开始解密消息，数据类型:', typeof encryptedData);
+    console.log('加密数据内容:', encryptedData);
+    
     // 仅处理普通文本消息加密格式
     if (
       !encryptedData ||
@@ -150,22 +154,30 @@ export const decrypt = async (encryptedData, sharedKey) => {
       typeof encryptedData.ciphertext !== 'string'
     ) {
       console.error('Invalid encrypted data format:', encryptedData);
-      return null;  // 或者抛出异常：throw new Error('Invalid encrypted data format');
+      // 第153行，建议统一错误处理方式
+      // 当前：return null;  // 或者抛出异常：throw new Error('Invalid encrypted data format');
+      // 建议改为：
+      throw new Error('Invalid encrypted data format');
     }
-    console.log('Decrypting message...');
+    
+    console.log('IV长度:', encryptedData.iv.length, 'Ciphertext长度:', encryptedData.ciphertext.length);
+    
     // 修改处：使用 utils. 前缀调用工具函数
     const iv = utils.base64ToArrayBuffer(encryptedData.iv);
     const ciphertext = utils.base64ToArrayBuffer(encryptedData.ciphertext);
+    
+    console.log('IV Buffer长度:', iv.byteLength, 'Encrypted Buffer长度:', ciphertext.byteLength);
+    
     const decryptedBuffer = await window.crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: new Uint8Array(iv), tagLength: 128 },
       sharedKey,
       ciphertext
     );
     const decryptedString = utils.arrayBufferToString(decryptedBuffer);
-    console.log('Message decrypted successfully');
+    console.log('解密成功，解密后数据长度:', decryptedString.length);
     return decryptedString;
   } catch (error) {
-    console.error('Decryption failed:', error);
+    console.error('解密失败:', error);
     throw error;
   }
 };

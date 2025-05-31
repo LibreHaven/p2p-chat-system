@@ -1,90 +1,91 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import styled from 'styled-components';
 import { FiSend } from 'react-icons/fi';
+import { Input as AntInput, Button as AntButton } from 'antd';
+import { utils } from '../utils';
 
 const Container = styled.div`
   display: flex;
   padding: 15px;
   background-color: white;
   border-top: 1px solid #eee;
+  gap: 10px;
 `;
 
-const MessageInput = styled.input`
+const StyledInput = styled(AntInput)`
   flex: 1;
-  padding: 12px 15px;
-  border: 1px solid #ddd;
+  height: 46px;
   border-radius: 20px;
   font-size: 16px;
-  outline: none;
-  transition: border-color 0.3s;
   
   &:focus {
     border-color: #4a90e2;
     box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
   }
-  
-  &:disabled {
-    background-color: #f5f5f5;
-    cursor: not-allowed;
-  }
 `;
 
-const SendButton = styled.button`
-  background-color: #4a90e2;
-  color: white;
-  border: none;
-  border-radius: 50%;
+const StyledButton = styled(AntButton)`
   width: 46px;
   height: 46px;
-  margin-left: 10px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
   
-  &:hover {
-    background-color: #3a80d2;
-    transform: scale(1.05);
-  }
-  
-  &:active {
-    transform: scale(0.95);
+  &.ant-btn-primary {
+    background-color: #4a90e2;
+    border-color: #4a90e2;
+    
+    &:hover {
+      background-color: #3a80d2 !important;
+      border-color: #3a80d2 !important;
+      transform: scale(1.05);
+    }
   }
   
   &:disabled {
-    background-color: #cccccc;
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
+    transform: none !important;
   }
 `;
 
 const MessageComposer = ({ value, onChange, onSend, disabled }) => {
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !disabled && value.trim()) {
+      e.preventDefault();
+      onSend();
+    }
+  };
+
+  const handleInputChange = (e) => {
+    if (onChange) {
+      onChange(e);
+    }
+  };
+
+  const handleSendClick = () => {
+    if (!disabled && value.trim()) {
       onSend();
     }
   };
 
   return (
     <Container>
-      <MessageInput
-        type="text"
+      <StyledInput
+        value={value || ''}
+        onChange={handleInputChange}
+        onPressEnter={handleKeyPress}
         placeholder="输入消息..."
-        value={value}
-        onChange={onChange}
-        onKeyPress={handleKeyPress}
         disabled={disabled}
+        maxLength={1000}
       />
-      <SendButton 
-        onClick={onSend} 
-        disabled={!value.trim() || disabled}
+      <StyledButton 
+        type="primary"
+        shape="circle"
+        icon={<FiSend />}
+        onClick={handleSendClick}
+        disabled={!value?.trim() || disabled}
         title="发送消息"
-      >
-        <FiSend size={20} />
-      </SendButton>
+      />
     </Container>
   );
 };
