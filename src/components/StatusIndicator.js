@@ -1,6 +1,20 @@
 import React from 'react';
 import styled, { keyframes, css } from 'styled-components';
 import { FiCheck, FiX, FiLoader } from 'react-icons/fi';
+import { Badge, Tag, Spin } from 'antd';
+
+// Styled Ant Design components for status indicator
+const StyledTag = styled(Tag)`
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 14px;
+  
+  .anticon {
+    margin-right: 6px;
+  }
+`;
 
 const rotate = keyframes`
   from {
@@ -60,43 +74,48 @@ const StatusText = styled.span`
 `;
 
 const StatusIndicator = ({ status }) => {
-  const renderIcon = () => {
+  const getTagProps = () => {
     switch (status) {
       case 'connected':
-        return <FiCheck />;
+        return {
+          color: 'success',
+          icon: <FiCheck />,
+          text: '已连接'
+        };
       case 'connecting':
-        return <FiLoader />;
+        return {
+          color: 'processing',
+          icon: <Spin size="small" indicator={<FiLoader />} />,
+          text: '连接中...'
+        };
       case 'failed':
-        return <FiX />;
+        return {
+          color: 'error',
+          icon: <FiX />,
+          text: '连接失败'
+        };
+      case 'disconnected':
+        return {
+          color: 'default',
+          icon: null,
+          text: '未连接'
+        };
       default:
-        return null;
+        return {
+          color: 'default',
+          icon: null,
+          text: '未知状态'
+        };
     }
   };
 
-  const getStatusText = () => {
-    switch (status) {
-      case 'disconnected':
-        return '未连接';
-      case 'connecting':
-        return '连接中...';
-      case 'connected':
-        return '已连接';
-      case 'failed':
-        return '连接失败';
-      default:
-        return '未知状态';
-    }
-  };
+  const { color, icon, text } = getTagProps();
 
   return (
-    <Container $status={status}>
-      <IconWrapper $status={status}>
-        {renderIcon()}
-      </IconWrapper>
-      <StatusText $status={status}>
-        {getStatusText()}
-      </StatusText>
-    </Container>
+    <StyledTag color={color}>
+      {icon && <span style={{ marginRight: '6px' }}>{icon}</span>}
+      {text}
+    </StyledTag>
   );
 };
 

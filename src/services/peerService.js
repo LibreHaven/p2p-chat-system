@@ -1,6 +1,9 @@
 import Peer from 'peerjs';
 import { encryptionService } from './encryptionService';
 import CryptoJS from 'crypto-js';
+import config from '../config';
+import { APP_CONSTANTS } from '../utils/constants';
+import { utils } from '../utils';
 
 // 文件块大小设置为16KB，避免超出数据通道大小限制
 const CHUNK_SIZE = 16 * 1024; // 16KB
@@ -12,37 +15,95 @@ class PeerService {
     this.isReady = false;
     this.pendingMessages = [];
     this.fileTransfers = {};
+    this.currentServerIndex = 0;
+    this.retryCount = 0;
+    this.isRetrying = false;
   }
 
   /**
    * 创建Peer连接
    * @param {string} id - 用户ID
-   * @param {function} onOpen - 连接打开回调
-   * @param {function} onError - 错误回调
-   * @param {function} onConnection - 接收连接回调
+   * @param {object|function} callbacks - 回调函数对象或onOpen回调
+   * @param {function} onError - 错误回调（当callbacks为函数时使用）
+   * @param {function} onConnection - 接收连接回调（当callbacks为函数时使用）
    */
-  createPeer(id, onOpen, onError, onConnection) {
+  createPeer(id, callbacks, onError, onConnection) {
+    // 兼容两种调用方式：对象形式和分离参数形式
+    if (typeof callbacks === 'object' && callbacks !== null) {
+      // 新的对象形式
+      const { onOpen, onError: errorCallback, onConnection: connectionCallback, onDisconnected, onClose } = callbacks
+      return this._createPeerWithRetry(id, onOpen, errorCallback, connectionCallback, onDisconnected, onClose);
+    } else {
+      // 旧的分离参数形式
+      return this._createPeerWithRetry(id, callbacks, onError, onConnection);
+    }
+  }
+
+  /**
+   * 带重试机制的Peer创建
+   */
+  _createPeerWithRetry(id, onOpen, onError, onConnection, onDisconnected, onClose) {
+    const server = config.peerServers[this.currentServerIndex];
+    
+    if (!server) {
+      console.error('所有PeerJS服务器都已尝试，连接失败');
+      if (onError) onError(new Error('无法连接到任何PeerJS服务器'));
+      return null;
+    }
+
+    console.log(`尝试连接到${server.name} (${server.host})`);
+
     try {
-      // 创建Peer实例
+      // 清理之前的连接
+      if (this.peer) {
+        this.peer.destroy();
+        this.peer = null;
+      }
+
+      // 使用当前服务器配置创建Peer
       this.peer = new Peer(id, {
-        debug: 2, // 调试级别
+        debug: config.peerConfig.debug,
+        host: server.host,
+        port: server.port,
+        path: server.path,
+        secure: server.secure,
         config: {
-          'iceServers': [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:global.stun.twilio.com:3478' }
-          ]
-        }
+          'iceServers': config.iceServers
+        },
+        pingInterval: config.peerConfig.pingInterval
       });
 
+      // 设置连接超时
+      const connectionTimeout = setTimeout(() => {
+        if (!this.isReady && !this.isRetrying) {
+          console.log(`连接${server.name}超时，尝试下一个服务器`);
+          this._tryNextServer(id, onOpen, onError, onConnection);
+        }
+      }, 10000); // 10秒超时
+
       // 绑定事件处理器
-      this.peer.on('open', (id) => {
-        console.log('Peer连接已打开，ID:', id);
-        if (onOpen) onOpen(id);
+      this.peer.on('open', (peerId) => {
+        clearTimeout(connectionTimeout);
+        console.log(`成功连接到${server.name}，Peer ID:`, peerId);
+        this.isReady = true;
+        this.retryCount = 0;
+        this.currentServerIndex = 0; // 重置为首选服务器
+        if (onOpen) onOpen(peerId);
       });
 
       this.peer.on('error', (err) => {
-        console.error('Peer错误:', err);
-        if (onError) onError(err);
+        clearTimeout(connectionTimeout);
+        console.error(`${server.name}连接错误:`, err);
+        
+        // 检查是否是服务器连接错误
+        if (err.type === 'server-error' || err.type === 'socket-error' || 
+            err.message.includes('Lost connection to server') ||
+            err.message.includes('Could not connect to peer')) {
+          this._tryNextServer(id, onOpen, onError, onConnection, onDisconnected, onClose);
+        } else {
+          // 其他类型的错误直接传递给回调
+          if (onError) onError(err);
+        }
       });
 
       this.peer.on('connection', (conn) => {
@@ -50,12 +111,68 @@ class PeerService {
         if (onConnection) onConnection(conn);
       });
 
+      this.peer.on('disconnected', () => {
+        console.log('Peer连接已断开');
+        if (onDisconnected) onDisconnected();
+      });
+
+      this.peer.on('close', () => {
+        console.log('Peer连接已关闭');
+        if (onClose) onClose();
+      });
+
       return this.peer;
     } catch (error) {
-      console.error('创建Peer失败:', error);
-      if (onError) onError(error);
+      console.error(`创建${server.name}连接失败:`, error);
+      this._tryNextServer(id, onOpen, onError, onConnection, onDisconnected, onClose);
       return null;
     }
+  }
+
+  /**
+   * 尝试下一个服务器
+   */
+  _tryNextServer(id, onOpen, onError, onConnection, onDisconnected, onClose) {
+    if (this.isRetrying) return;
+    
+    this.isRetrying = true;
+    this.currentServerIndex++;
+    
+    // 如果所有服务器都尝试过，重置并增加重试计数
+    if (this.currentServerIndex >= config.peerServers.length) {
+      this.currentServerIndex = 0;
+      this.retryCount++;
+      
+      if (this.retryCount >= config.peerConfig.maxRetries) {
+        console.error('已达到最大重试次数，连接失败');
+        this.isRetrying = false;
+        if (onError) onError(new Error('无法连接到PeerJS服务器，请检查网络连接'));
+        return;
+      }
+      
+      console.log(`第${this.retryCount}次重试，等待${config.peerConfig.retryDelay}ms后继续...`);
+      setTimeout(() => {
+        this.isRetrying = false;
+        this._createPeerWithRetry(id, onOpen, onError, onConnection, onDisconnected, onClose);
+      }, config.peerConfig.retryDelay);
+    } else {
+      // 立即尝试下一个服务器
+      setTimeout(() => {
+        this.isRetrying = false;
+        this._createPeerWithRetry(id, onOpen, onError, onConnection, onDisconnected, onClose);
+      }, 1000);
+    }
+  }
+
+  /**
+   * 重置连接状态（用于手动重试）
+   */
+  resetConnectionState() {
+    this.currentServerIndex = 0;
+    this.retryCount = 0;
+    this.isRetrying = false;
+    this.isReady = false;
+    console.log('连接状态已重置');
   }
 
   /**
@@ -125,14 +242,42 @@ class PeerService {
         return false;
       }
 
+      if (!message) {
+        console.error('发送消息失败: 消息内容为空');
+        return false;
+      }
+
+      // 统一消息序列化处理 - 确保所有消息都以JSON字符串形式发送
+      let messageToSend;
+      if (typeof message === 'string') {
+        // 如果已经是字符串（如加密消息），直接发送
+        messageToSend = message;
+      } else if (typeof message === 'object' && !(message instanceof ArrayBuffer) && !(message instanceof Uint8Array)) {
+        // 如果是对象，序列化为JSON字符串
+        try {
+          messageToSend = JSON.stringify(message);
+        } catch (serializeError) {
+          console.error('消息序列化失败:', serializeError);
+          return false;
+        }
+      } else {
+        // 其他类型（如二进制数据）直接发送
+        messageToSend = message;
+      }
+
       if (connection.open) {
         // 连接已打开，直接发送
-        connection.send(message);
+        console.log('发送消息:', typeof messageToSend === 'string' ? messageToSend.substring(0, 100) + (messageToSend.length > 100 ? '...' : '') : messageToSend);
+        connection.send(messageToSend);
+        console.log('消息发送成功');
         return true;
       } else {
         // 连接未打开，加入待发送队列
         console.log('连接未打开，消息已加入待发送队列');
-        this.pendingMessages.push(message);
+        if (!connection.pendingMessages) {
+          connection.pendingMessages = [];
+        }
+        connection.pendingMessages.push(messageToSend);
         return false;
       }
     } catch (error) {
@@ -175,7 +320,7 @@ class PeerService {
    * @param {string} sharedSecret - 共享密钥(加密模式下必须提供)
    * @param {object} callbacks - 回调函数集合
    */
-  sendFile(connection, file, useEncryption, sharedSecret, callbacks = {}) {
+  async sendFile(connection, file, useEncryption, sharedSecret, callbacks = {}) {
     if (!connection || !file) {
       if (callbacks.onError) callbacks.onError(new Error('连接或文件不存在'));
       return;
@@ -230,7 +375,7 @@ class PeerService {
             await new Promise(resolve => setTimeout(resolve, 50));
           }
         };
-        sendChunksSequentially();
+        await sendChunksSequentially();
       } catch (error) {
         console.error('处理文件失败:', error);
         if (callbacks.onError) callbacks.onError(error);
@@ -322,7 +467,7 @@ class PeerService {
    * @param {string} sharedSecret - 共享密钥(加密模式下必须提供)
    * @param {object} callbacks - 回调函数集合
    */
-  handleReceivedData(data, useEncryption, sharedSecret, callbacks = {}) {
+  async handleReceivedData(data, useEncryption, sharedSecret, callbacks = {}) {
     try {
       // 检查数据类型
       if (typeof data === 'string') {
@@ -331,6 +476,38 @@ class PeerService {
       } else if (data instanceof ArrayBuffer || data instanceof Uint8Array) {
         // 二进制数据 - 可能是文件块
         this.handleBinaryData(data, useEncryption, sharedSecret, callbacks);
+      } else if (typeof data === 'object' && data.type === 'file-chunk') {
+        // 对象类型的文件块消息
+        console.log('处理对象类型的文件块消息:', data);
+        try {
+          if (data.encryptedData && useEncryption && sharedSecret) {
+            // 加密模式下的文件块处理
+            let encryptedDataObj;
+            if (typeof data.encryptedData === 'string') {
+              encryptedDataObj = JSON.parse(data.encryptedData);
+            } else {
+              encryptedDataObj = data.encryptedData;
+            }
+            const decryptedBase64 = await encryptionService.decryptRaw(encryptedDataObj, sharedSecret);
+            if (!decryptedBase64) {
+              console.error('文件块解密返回为空');
+              return;
+            }
+            console.log('解密后的 base64 数据:', decryptedBase64);
+            const chunkData = encryptionService.utils.base64ToArrayBuffer(decryptedBase64);
+            console.log('转换后的 chunkData 长度:', chunkData.byteLength);
+            if (callbacks.onFileChunk) {
+              callbacks.onFileChunk(data.transferId, data.chunkIndex, chunkData, data);
+            }
+            if (data.isLastChunk && callbacks.onFileTransferComplete) {
+              callbacks.onFileTransferComplete(data.transferId);
+            }
+          } else {
+             console.log('file-chunk消息缺少必要的数据字段');
+           }
+        } catch (error) {
+          console.error('对象类型文件块处理失败:', error);
+        }
       } else {
         // 其他类型数据 - 尝试作为普通消息处理
         if (callbacks.onMessage) callbacks.onMessage(data);
@@ -351,12 +528,18 @@ class PeerService {
     try {
       let jsonData;
       try {
-        // 先直接解析 JSON 数据
+        // 尝试解析JSON数据
         jsonData = JSON.parse(data);
       } catch (e) {
-        // 如果解析失败，直接作为普通消息传递
+        // JSON解析失败，可能是纯文本消息，创建标准消息对象
+        console.log('收到非JSON格式消息，作为纯文本处理:', data);
+        const textMessage = {
+          type: 'message',
+          content: data,
+          timestamp: Date.now()
+        };
         if (callbacks.onMessage) {
-          callbacks.onMessage(data);
+          callbacks.onMessage(textMessage);
         }
         return;
       }
@@ -394,6 +577,7 @@ class PeerService {
         console.log('处理文件块消息，jsonData:', jsonData);
         try {
           if (jsonData.encryptedData && useEncryption && sharedSecret) {
+            // 加密模式下的文件块处理
             let encryptedDataObj;
             if (typeof jsonData.encryptedData === 'string') {
               encryptedDataObj = JSON.parse(jsonData.encryptedData);
@@ -414,9 +598,11 @@ class PeerService {
             if (jsonData.isLastChunk && callbacks.onFileTransferComplete) {
               callbacks.onFileTransferComplete(jsonData.transferId);
             }
+          } else {
+            console.log('file-chunk消息缺少encryptedData字段，可能是非加密模式的错误数据');
           }
         } catch (error) {
-          console.error('文件块解密失败:', error);
+          console.error('文件块处理失败:', error);
         }
         return;
       } else {
@@ -516,14 +702,8 @@ const peerServiceInstance = new PeerService();
  * 生成随机ID
  * @returns {string} - 随机生成的ID
  */
-const generateRandomId = () => {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let result = '';
-  for (let i = 0; i < 8; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-};
+// 使用统一的随机ID生成函数
+const { generateRandomId } = utils;
 
 /**
  * 初始化 Peer 连接 - 为保持与原有代码的兼容性而添加
@@ -635,11 +815,13 @@ const connectToPeer = (peer, targetId) => {
 const setupDataConnectionListeners = (conn, callbacks = {}) => {
   if (!conn) return;
 
-  // 移除所有现有监听器，防止重复绑定
-  conn.removeAllListeners('open');
-  conn.removeAllListeners('data');
-  conn.removeAllListeners('close');
-  conn.removeAllListeners('error');
+  // 移除现有监听器，防止重复绑定 - 使用 removeListener 方法
+  if (conn.removeListener) {
+    conn.removeListener('open');
+    conn.removeListener('data');
+    conn.removeListener('close');
+    conn.removeListener('error');
+  }
 
   // 连接打开时的回调 - 确保这是第一个被绑定的事件
   conn.on('open', () => {
@@ -671,8 +853,14 @@ const setupDataConnectionListeners = (conn, callbacks = {}) => {
 
   // 收到数据时的回调
   conn.on('data', (data) => {
-    console.log('收到来自', conn.peer, '的数据');
-    if (callbacks.onData) callbacks.onData(data);
+    console.log('收到来自', conn.peer, '的数据:', typeof data === 'string' ? data.substring(0, 100) + (data.length > 100 ? '...' : '') : data);
+    console.log('数据类型:', typeof data);
+    if (callbacks.onData) {
+      console.log('调用onData回调处理数据');
+      callbacks.onData(data);
+    } else {
+      console.warn('没有设置onData回调函数');
+    }
   });
 
   // 连接关闭时的回调
@@ -769,8 +957,8 @@ const reestablishConnection = (peer, targetId, callbacks = {}) => {
  * @param {string} sharedSecret - 共享密钥(加密模式下必须提供)
  * @param {object} callbacks - 回调函数集合
  */
-const sendFile = (conn, file, useEncryption, sharedSecret, callbacks = {}) => {
-  return peerServiceInstance.sendFile(conn, file, useEncryption, sharedSecret, callbacks);
+const sendFile = async (conn, file, useEncryption, sharedSecret, callbacks = {}) => {
+  return await peerServiceInstance.sendFile(conn, file, useEncryption, sharedSecret, callbacks);
 };
 
 /**
@@ -780,13 +968,24 @@ const sendFile = (conn, file, useEncryption, sharedSecret, callbacks = {}) => {
  * @param {string} sharedSecret - 共享密钥(加密模式下必须提供)
  * @param {object} callbacks - 回调函数集合
  */
-const handleReceivedData = (data, useEncryption, sharedSecret, callbacks = {}) => {
-  return peerServiceInstance.handleReceivedData(data, useEncryption, sharedSecret, callbacks);
+const handleReceivedData = async (data, useEncryption, sharedSecret, callbacks = {}) => {
+  return await peerServiceInstance.handleReceivedData(data, useEncryption, sharedSecret, callbacks);
+};
+
+/**
+ * 创建Peer连接 - 为保持与原有代码的兼容性而添加
+ * @param {string} id - 用户ID
+ * @param {object} callbacks - 回调函数对象 {onOpen, onError, onConnection}
+ */
+const createPeer = (id, callbacks = {}) => {
+  const { onOpen, onError, onConnection } = callbacks;
+  return peerServiceInstance.createPeer(id, onOpen, onError, onConnection);
 };
 
 // 导出服务
 const peerService = {
   generateRandomId,
+  createPeer,  // 现在这个引用有对应的函数定义了
   initializePeer,
   setupConnectionListeners,
   connectToPeer,
