@@ -4,7 +4,7 @@
 
 ## 系统架构
 
-P2P聊天系统采用纯前端架构，基于WebRTC技术实现点对点通信，不依赖中心服务器进行消息中转。系统架构如下：
+P2P聊天系统采用现代化的React架构模式，基于WebRTC技术实现点对点通信，不依赖中心服务器进行消息中转。系统采用Container/UI分离、自定义Hooks、状态管理等现代前端架构模式。系统架构如下：
 
 ```
 +-------------------+                      +-------------------+
@@ -55,22 +55,30 @@ P2P聊天系统采用纯前端架构，基于WebRTC技术实现点对点通信�
 
 ### 关键组件
 
-1. **React前端应用**：提供用户界面和交互逻辑
-2. **PeerJS客户端**：封装WebRTC API，简化连接建立过程
-3. **WebRTC数据通道**：提供点对点通信能力
-4. **加密模块**：实现ECDH密钥协商和AES-GCM加密
-5. **PeerJS信令服务器**：仅用于连接建立阶段的信令交换
-6. **STUN服务器**：辅助NAT穿透，帮助确定公网IP和端口
+1. **React前端应用**：采用Container/UI分离模式，提供清晰的架构层次
+2. **自定义Hooks**：封装业务逻辑，实现逻辑复用和状态管理
+3. **Zustand状态管理**：轻量级全局状态管理，支持多聊天会话和群聊
+4. **PeerJS客户端**：封装WebRTC API，支持多服务器重试机制
+5. **WebRTC数据通道**：提供点对点通信能力
+6. **加密模块**：实现ECDH密钥协商和AES-GCM加密
+7. **配置管理**：统一的配置文件管理STUN服务器和PeerJS服务器
+8. **工具函数库**：提供验证、常量定义等通用功能
 
 ## 技术选型详解
 
-### 前端框架：React
+### 前端框架：React + 现代架构模式
 
 选择React作为前端框架的原因：
 - 组件化开发模式，便于UI复用和状态管理
 - 虚拟DOM提高渲染性能
 - 丰富的生态系统和社区支持
 - 与WebRTC和加密库良好的兼容性
+
+**架构模式**：
+- **Container/UI分离**：业务逻辑与UI展示分离，提高代码可维护性
+- **自定义Hooks**：封装复杂业务逻辑，实现逻辑复用
+- **Zustand状态管理**：轻量级状态管理，支持DevTools调试
+- **Ant Design组件库**：提供现代化的UI组件和设计语言
 
 ### P2P通信：WebRTC + PeerJS
 
@@ -106,13 +114,19 @@ P2P聊天系统采用纯前端架构，基于WebRTC技术实现点对点通信�
 - 浏览器环境下实现高效
 - 提供认证加密功能，防止篡改
 
-### 样式处理：Styled Components
+### 样式处理：Styled Components + Ant Design
 
-选择Styled Components的原因：
+**Styled Components**：
 - 组件级CSS隔离
 - 动态样式生成能力
 - 与React组件模型完美契合
 - 提高代码可维护性
+
+**Ant Design**：
+- 企业级UI设计语言
+- 丰富的组件库
+- 主题定制能力
+- 国际化支持
 
 ## 数据流
 
@@ -176,12 +190,33 @@ P2P聊天系统采用纯前端架构，基于WebRTC技术实现点对点通信�
 
 ## 模块详解
 
-### 服务模块
+### 架构层次
 
-#### peerService.js
+#### 1. 容器层 (Containers)
+- **ConnectionContainer.js**：连接管理容器，处理连接建立逻辑
+- **ChatScreenContainer.js**：聊天界面容器，管理聊天会话
+- **ErrorScreenContainer.js**：错误处理容器，统一错误展示
 
+#### 2. UI层 (Components/UI)
+- **ConnectionScreenUI.js**：连接界面纯UI组件
+- **ChatScreenUI.js**：聊天界面纯UI组件
+- **MessageBubbleUI.js**：消息气泡UI组件
+- **FilePreviewUI.js**：文件预览UI组件
+- **其他UI组件**：各种功能性UI组件
+
+#### 3. 业务逻辑层 (Hooks)
+- **useConnection.js**：连接管理Hook，封装连接建立、接受、拒绝等逻辑
+- **useChatSession.js**：聊天会话Hook，管理消息发送接收、加密等
+- **useFileTransfer.js**：文件传输Hook，处理文件选择、发送、接收
+
+#### 4. 状态管理层 (Store)
+- **Zustand Store**：全局状态管理，支持多聊天会话、群聊、通话状态
+
+#### 5. 服务层 (Services)
+
+##### peerService.js
 负责WebRTC连接管理和文件传输，包括：
-- 初始化PeerJS客户端
+- 多PeerJS服务器重试机制
 - 建立和管理P2P连接
 - 处理连接事件（连接、断开、错误等）
 - 配置STUN服务器
@@ -194,8 +229,7 @@ P2P聊天系统采用纯前端架构，基于WebRTC技术实现点对点通信�
 - 心跳检测机制确保连接状态监控
 - 连接断开后的重连尝试逻辑
 
-#### encryptionService.js
-
+##### encryptionService.js
 负责加密功能，包括：
 - 基于Web Crypto API的ECDH密钥协商
 - AES-GCM加密和解密
@@ -204,49 +238,49 @@ P2P聊天系统采用纯前端架构，基于WebRTC技术实现点对点通信�
 - 公钥导入导出
 - 共享密钥派生
 - 加密就绪确认机制
+- 工具函数：Base64编解码、ArrayBuffer转换等
 
-#### messageService.js
-
+##### messageService.js
 负责消息处理，包括：
 - 创建消息对象
 - 序列化和反序列化消息
 - 消息格式验证
 
-### 组件模块
+#### 6. 配置层 (Config)
+- **统一配置管理**：STUN服务器、PeerJS服务器、开发模式等
+- **多服务器配置**：支持主备服务器自动切换
+- **环境变量支持**：开发/生产环境配置
 
-#### ConnectionScreen.js
+#### 7. 工具层 (Utils)
+- **constants.js**：应用常量定义（文件大小限制、消息类型、错误代码等）
+- **validation.js**：数据验证函数（Peer ID、文件大小、消息内容等）
+- **devTools.js**：开发工具和调试功能
+- **index.js**：工具函数导出
 
-负责连接界面，包括：
-- 用户ID输入和验证
-- 目标ID输入和验证
-- 连接状态显示
-- 连接建立和错误处理
-- 密钥协商初始化
-- 加密开关控制
-- 连接请求接受/拒绝处理
-- 显示提示消息（Toast）
-- 随机ID生成功能
+### 现代化架构特点
 
-#### ChatScreen.js
+#### Container/UI分离模式
+- **容器组件**：负责业务逻辑、状态管理、数据获取
+- **UI组件**：纯展示组件，接收props进行渲染
+- **优势**：逻辑复用、测试友好、职责清晰
 
-负责聊天界面，包括：
-- 消息显示和排版
-- 消息输入和发送
-- 加密消息处理
-- 连接状态监控和断线重连
-- 文件选择和发送
-- 文件传输进度显示
-- 文件预览和下载
-- 加密状态显示
-- 心跳检测和连接维护
+#### 自定义Hooks模式
+- **useConnection**：连接管理逻辑封装
+- **useChatSession**：聊天会话逻辑封装
+- **useFileTransfer**：文件传输逻辑封装
+- **优势**：逻辑复用、状态隔离、易于测试
 
-#### ErrorScreen.js
+#### 状态管理策略
+- **本地状态**：组件内部状态使用useState
+- **共享状态**：跨组件状态使用Zustand
+- **会话状态**：临时状态使用sessionStorage
+- **配置状态**：静态配置使用配置文件
 
-负责错误处理，包括：
-- 显示错误信息
-- 提供重试选项
-- 错误原因分析和提示
-- 返回主界面选项
+#### 错误处理机制
+- **ErrorBoundary**：React错误边界捕获组件错误
+- **服务重试**：PeerJS服务器自动重试机制
+- **连接恢复**：断线自动重连机制
+- **用户反馈**：Toast消息和错误界面
 
 ## 安全考量
 
@@ -301,43 +335,95 @@ P2P聊天系统采用纯前端架构，基于WebRTC技术实现点对点通信�
 ### 添加视频/语音通话
 
 1. 扩展peerService.js以支持MediaStream
-2. 添加媒体协商和控制组件
-3. 实现媒体流的获取和显示
-4. 添加音视频控制UI
+2. 创建useMediaCall Hook封装通话逻辑
+3. 添加CallContainer和CallUI组件
+4. 在Zustand store中添加通话状态管理
+5. 实现媒体流的获取和显示
 
 ```javascript
-// 获取媒体流示例
-navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-  .then(stream => {
-    // 将流添加到peer连接
-    const call = peer.call(targetId, stream);
-    
-    // 处理接收到的流
-    call.on('stream', remoteStream => {
-      // 显示远程视频
-      remoteVideo.srcObject = remoteStream;
+// useMediaCall Hook示例
+const useMediaCall = () => {
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+  
+  const startCall = async (targetId, type) => {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: type === 'video',
+      audio: true
     });
-  });
+    setLocalStream(stream);
+    // 发起通话逻辑
+  };
+  
+  return { localStream, remoteStream, startCall };
+};
 ```
 
 ### 实现群聊功能
 
-1. 实现Mesh网络连接管理
-2. 扩展消息广播机制
-3. 添加群组管理UI
-4. 优化多连接性能
+1. 扩展Zustand store支持群组管理
+2. 创建useGroupChat Hook
+3. 实现Mesh网络连接管理
+4. 添加GroupChatContainer和GroupChatUI
+5. 扩展消息广播机制
+
+```javascript
+// Zustand store群聊扩展
+const useAppStore = create((set, get) => ({
+  groups: new Map(),
+  activeGroupId: null,
+  
+  createGroup: (groupId, members) => {
+    const groups = new Map(get().groups);
+    groups.set(groupId, { members, messages: [] });
+    set({ groups });
+  }
+}));
+```
 
 ### 离线消息支持
 
-1. 实现消息存储机制（使用IndexedDB）
-2. 添加消息同步协议
-3. 实现消息队列和重传机制
-4. 添加消息状态标识（已发送/已接收/已读）
+1. 创建useOfflineMessages Hook
+2. 实现IndexedDB存储机制
+3. 添加消息同步协议
+4. 实现消息队列和重传机制
+5. 添加消息状态标识（已发送/已接收/已读）
+
+```javascript
+// useOfflineMessages Hook示例
+const useOfflineMessages = () => {
+  const [offlineQueue, setOfflineQueue] = useState([]);
+  
+  const storeOfflineMessage = async (message) => {
+    // 存储到IndexedDB
+    await indexedDBService.storeMessage(message);
+  };
+  
+  return { offlineQueue, storeOfflineMessage };
+};
+```
 
 ## 部署注意事项
 
+### 环境要求
 - 确保部署环境支持HTTPS（WebRTC和Web Crypto API要求）
+- Node.js 14+ 和 npm 6+ 用于构建
+- 现代浏览器支持（Chrome 88+, Firefox 85+, Safari 14+）
+
+### 服务器配置
 - 考虑使用专用STUN/TURN服务器提高NAT穿透成功率
+- 配置多个PeerJS服务器实现高可用
 - 对于高流量应用，考虑自建PeerJS信令服务器
+- 配置CDN加速静态资源加载
+
+### 监控和优化
 - 监控WebRTC连接质量，提供网络状况反馈
 - 为不同网络环境提供回退机制
+- 使用Zustand DevTools进行状态调试
+- 配置错误监控和日志收集
+
+### 构建优化
+- 使用Webpack代码分割减少初始加载时间
+- 配置Tree Shaking移除未使用代码
+- 启用Gzip压缩减少传输大小
+- 配置Service Worker支持离线访问

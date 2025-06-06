@@ -65,11 +65,15 @@ npm start
 
 ## 技术架构
 
-- **前端框架**: React
-- **点对点通信**: PeerJS (基于WebRTC)
+- **前端框架**: React 18.2.0
+- **架构模式**: Container/UI分离 + 自定义Hooks
+- **状态管理**: Zustand (轻量级状态管理)
+- **UI组件库**: Ant Design 5.25.4
+- **点对点通信**: PeerJS 1.5.4 (基于WebRTC)
 - **加密**: Web Crypto API (ECDH密钥交换和AES-GCM加密)
-- **样式**: Styled Components
+- **样式**: Styled Components 6.1.16
 - **文件传输**: 二进制数据分块传输 (16KB/块)
+- **构建工具**: Webpack 5.98.0 + Babel 7.26.10
 
 ## 文件结构
 
@@ -79,45 +83,87 @@ p2p-chat-system/
 │   ├── index.html
 │   └── favicon.ico
 ├── src/
-│   ├── components/
-│   │   ├── ChatScreen.js        # 聊天界面组件
-│   │   ├── ConnectionScreen.js  # 连接界面组件
-│   │   ├── ErrorScreen.js       # 错误界面组件
+│   ├── components/              # 基础UI组件
+│   │   ├── ui/                  # 纯UI组件
+│   │   │   ├── ConnectionScreenUI.js  # 连接界面UI
+│   │   │   ├── ChatScreenUI.js        # 聊天界面UI
+│   │   │   ├── ErrorScreenUI.js       # 错误界面UI
+│   │   │   ├── MessageBubbleUI.js     # 消息气泡UI
+│   │   │   ├── MessageComposerUI.js   # 消息输入UI
+│   │   │   ├── FilePreviewUI.js       # 文件预览UI
+│   │   │   └── FileMessageUI.js       # 文件消息UI
+│   │   ├── ErrorBoundary.js     # 错误边界组件
 │   │   ├── MessageBubble.js     # 消息气泡组件
 │   │   ├── MessageComposer.js   # 消息输入组件
 │   │   ├── StatusIndicator.js   # 状态指示器组件
 │   │   ├── CopyableId.js        # 可复制ID组件
 │   │   └── Toast.js             # 提示消息组件
-│   ├── services/
+│   ├── containers/              # 容器组件
+│   │   ├── ConnectionContainer.js   # 连接管理容器
+│   │   ├── ChatScreenContainer.js   # 聊天界面容器
+│   │   └── ErrorScreenContainer.js  # 错误处理容器
+│   ├── hooks/                   # 自定义Hooks
+│   │   ├── useConnection.js     # 连接管理Hook
+│   │   ├── useChatSession.js    # 聊天会话Hook
+│   │   └── useFileTransfer.js   # 文件传输Hook
+│   ├── services/                # 核心服务
 │   │   ├── encryptionService.js # 加密服务
 │   │   ├── peerService.js       # 点对点连接服务
 │   │   └── messageService.js    # 消息处理服务
+│   ├── store/                   # 状态管理
+│   │   └── index.js             # Zustand状态管理
+│   ├── config/                  # 配置管理
+│   │   └── index.js             # 应用配置
+│   ├── utils/                   # 工具函数
+│   │   ├── constants.js         # 应用常量
+│   │   ├── validation.js        # 数据验证
+│   │   ├── devTools.js          # 开发工具
+│   │   └── index.js             # 工具函数导出
 │   ├── styles/
 │   │   └── global.css           # 全局样式
 │   ├── App.js                   # 应用主组件
 │   └── index.js                 # 应用入口
 ├── docs/
-│   └── 修复说明文档.md           # 系统修复说明文档
+│   ├── ARCHITECTURE.md          # 架构说明文档
+│   ├── GROUP_CHAT_DESIGN.md     # 群聊设计文档
+│   └── P2P_聊天系统_设计文档_v1.0.0_20250320.md
 ├── package.json
 └── webpack.config.js
 ```
 
-## 安全考虑
+## 架构特点
 
+### 现代化架构模式
+- **Container/UI分离**: 业务逻辑与UI展示分离，提高代码可维护性
+- **自定义Hooks**: 封装复杂业务逻辑，实现逻辑复用
+- **Zustand状态管理**: 轻量级状态管理，支持DevTools调试
+- **多服务器重试**: 自动切换PeerJS服务器，提高连接成功率
+
+### 安全考虑
 - 使用Web Crypto API的ECDH密钥交换和AES-GCM加密
-- 密钥仅存储在会话存储中，页面关闭后自动清除
+- 密钥仅存储在内存中，会话结束后自动清除
 - 没有消息会被保存到服务器
 - 文件传输时对每个块单独加密，确保大文件传输的安全性
 - 心跳检测确保连接状态实时监控
 - 加密就绪确认机制确保双方都准备好进行加密通信
+- ErrorBoundary错误边界捕获组件错误
 
 ## 已知限制
 
-- 目前仅支持两人之间的通信
-- 不支持离线消息
+- 目前仅支持两人之间的通信（架构已支持群聊扩展）
+- 不支持离线消息（可通过IndexedDB扩展）
 - 在某些网络环境下可能需要TURN服务器辅助连接
 - 大文件传输可能受到浏览器内存限制
 - 需要在HTTPS环境下运行才能使用Web Crypto API
+
+## 扩展能力
+
+系统采用模块化架构，支持以下功能扩展：
+- **群聊功能**: 基于Zustand store扩展群组管理
+- **音视频通话**: 使用自定义Hooks封装MediaStream
+- **离线消息**: 通过IndexedDB实现本地存储
+- **主题系统**: 基于Ant Design的主题定制
+- **国际化**: 多语言界面支持
 
 ## 贡献
 

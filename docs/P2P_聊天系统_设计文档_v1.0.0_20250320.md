@@ -23,26 +23,52 @@ P2P聊天系统是一个基于WebRTC技术的点对点通信应用，允许用�
 - **WebRTC封装**：PeerJS 1.5.4
 - **加密实现**：Web Crypto API (ECDH密钥交换和AES-GCM加密)
 - **构建工具**：Webpack 5.98.0, Babel 7.26.10
-- **样式**：Styled Components 6.1.16
+- **样式**：Styled Components 6.1.16 + Ant Design 5.25.4
 - **图标库**：React Icons 5.5.0
+- **状态管理**：Zustand (轻量级状态管理)
+- **工具库**：CryptoJS 4.2.0 (辅助加密功能)
+- **架构模式**：Container/UI分离 + 自定义Hooks
 
 ### 2.3 模块组织
 
 ```
 src/
-├── components/       # UI组件
-│   ├── ChatScreen.js        # 聊天界面组件
-│   ├── ConnectionScreen.js  # 连接界面组件
-│   ├── ErrorScreen.js       # 错误界面组件
+├── components/       # 基础UI组件
+│   ├── ui/                  # 纯UI组件
+│   │   ├── ConnectionScreenUI.js  # 连接界面UI
+│   │   ├── ChatScreenUI.js        # 聊天界面UI
+│   │   ├── ErrorScreenUI.js       # 错误界面UI
+│   │   ├── MessageBubbleUI.js     # 消息气泡UI
+│   │   ├── MessageComposerUI.js   # 消息输入UI
+│   │   ├── FilePreviewUI.js       # 文件预览UI
+│   │   └── FileMessageUI.js       # 文件消息UI
+│   ├── ErrorBoundary.js     # 错误边界组件
 │   ├── MessageBubble.js     # 消息气泡组件
 │   ├── MessageComposer.js   # 消息输入组件
 │   ├── StatusIndicator.js   # 状态指示器组件
 │   ├── CopyableId.js        # 可复制ID组件
 │   └── Toast.js             # 提示消息组件
+├── containers/       # 容器组件
+│   ├── ConnectionContainer.js   # 连接管理容器
+│   ├── ChatScreenContainer.js   # 聊天界面容器
+│   └── ErrorScreenContainer.js  # 错误处理容器
+├── hooks/            # 自定义Hooks
+│   ├── useConnection.js     # 连接管理Hook
+│   ├── useChatSession.js    # 聊天会话Hook
+│   └── useFileTransfer.js   # 文件传输Hook
 ├── services/         # 核心服务
 │   ├── peerService.js       # WebRTC连接管理
 │   ├── encryptionService.js # 加密服务
 │   └── messageService.js    # 消息处理
+├── store/            # 状态管理
+│   └── index.js             # Zustand状态管理
+├── config/           # 配置管理
+│   └── index.js             # 应用配置
+├── utils/            # 工具函数
+│   ├── constants.js         # 应用常量
+│   ├── validation.js        # 数据验证
+│   ├── devTools.js          # 开发工具
+│   └── index.js             # 工具函数导出
 ├── styles/           # 全局样式
 │   └── global.css           # 全局样式定义
 ├── App.js            # 应用入口
@@ -178,62 +204,161 @@ src/
 
 ## 8. 核心组件详解
 
-### 8.1 peerService.js
+### 8.1 架构层次组件
+
+#### 8.1.1 容器组件 (Containers)
+
+**ConnectionContainer.js**：
+- 管理连接建立流程
+- 处理用户ID验证
+- 协调连接状态和加密设置
+- 集成useConnection Hook
+
+**ChatScreenContainer.js**：
+- 管理聊天会话状态
+- 协调消息发送接收
+- 处理文件传输逻辑
+- 集成useChatSession和useFileTransfer Hooks
+
+**ErrorScreenContainer.js**：
+- 统一错误处理和展示
+- 提供错误恢复机制
+- 管理错误状态
+
+#### 8.1.2 自定义Hooks
+
+**useConnection.js**：
+- 封装连接建立、接受、拒绝逻辑
+- 管理连接状态和错误处理
+- 处理加密协商
+- 提供连接相关的所有状态和方法
+
+**useChatSession.js**：
+- 管理聊天会话生命周期
+- 处理消息发送接收和加密
+- 实现心跳检测和重连机制
+- 管理连接状态监控
+
+**useFileTransfer.js**：
+- 封装文件选择、发送、接收逻辑
+- 管理文件传输进度
+- 处理文件预览和下载
+- 支持多种文件类型
+
+#### 8.1.3 UI组件层
+
+**ConnectionScreenUI.js**：
+- 纯UI展示组件，接收props进行渲染
+- 使用Ant Design组件库
+- 响应式设计和动画效果
+- 无业务逻辑，专注于展示
+
+**ChatScreenUI.js**：
+- 聊天界面纯UI组件
+- 消息列表展示和滚动管理
+- 文件传输进度显示
+- 状态指示器集成
+
+### 8.2 服务层组件
+
+#### 8.2.1 peerService.js
 
 负责WebRTC连接管理：
+- 多PeerJS服务器重试机制
 - 创建和管理Peer连接
 - 处理数据传输
 - 实现文件分块传输
 - 提供心跳检测
 - 处理连接断开和重连
+- 配置管理和错误处理
 
-### 8.2 encryptionService.js
+#### 8.2.2 encryptionService.js
 
 负责加密功能：
 - 实现ECDH密钥交换
 - 提供AES-GCM加密和解密
 - 处理加密状态管理
 - 支持二进制数据加密（用于文件传输）
+- 工具函数：Base64编解码、ArrayBuffer转换
+- 加密会话管理
 
-### 8.3 ChatScreen.js
+#### 8.2.3 messageService.js
 
-负责聊天界面：
-- 显示消息历史
-- 处理消息发送和接收
-- 管理文件传输
-- 显示连接和加密状态
-- 处理重连请求
+负责消息处理：
+- 创建标准化消息对象
+- 消息序列化和反序列化
+- 消息格式验证
+- 支持多种消息类型
 
-### 8.4 ConnectionScreen.js
+### 8.3 状态管理
 
-负责连接管理：
-- 创建Peer连接
-- 发起连接请求
-- 处理连接请求接受/拒绝
-- 执行初始密钥交换
+#### 8.3.1 Zustand Store
+
+- 轻量级全局状态管理
+- 支持多聊天会话
+- 群聊状态管理
+- 通话状态管理
+- DevTools集成
+
+### 8.4 配置和工具
+
+#### 8.4.1 配置管理 (config/index.js)
+
+- 统一的应用配置
+- 多PeerJS服务器配置
+- STUN服务器配置
+- 环境变量支持
+
+#### 8.4.2 工具函数 (utils/)
+
+- **constants.js**：应用常量定义
+- **validation.js**：数据验证函数
+- **devTools.js**：开发调试工具
+- **index.js**：工具函数统一导出
 
 ## 9. 性能优化
 
-### 9.1 文件传输优化
+### 9.1 架构层面优化
+
+- **Container/UI分离**：业务逻辑与UI渲染分离，提高组件复用性
+- **自定义Hooks**：逻辑封装和复用，减少重复代码
+- **Zustand状态管理**：轻量级状态管理，减少不必要的重渲染
+- **懒加载组件**：按需加载UI组件，减少初始包大小
+
+### 9.2 文件传输优化
 
 - 文件分块传输（16KB/块）避免WebRTC数据通道限制
 - 二进制数据传输提高效率
 - 支持大文件传输的块缓冲管理
 - 文件类型自动识别提供适当预览
+- 文件传输进度实时反馈
+- 支持传输中断和恢复
 
-### 9.2 连接稳定性
+### 9.3 连接稳定性
 
+- 多PeerJS服务器重试机制
 - 心跳检测确保连接状态实时监控
 - 自动重连机制在连接断开时尝试恢复
 - 连接状态监控提供用户反馈
 - 优化事件监听器管理防止内存泄漏
+- 指数退避重连策略
 
-### 9.3 UI响应优化
+### 9.4 UI响应优化
 
 - 异步处理密钥生成和加密操作
-- 优化组件渲染减少不必要更新
+- React.memo优化组件渲染
+- useCallback和useMemo减少不必要计算
+- 虚拟滚动处理大量消息
 - 文件传输进度实时显示
 - 使用React引用跟踪清理资源
+- Ant Design组件优化
+
+### 9.5 代码分割和打包优化
+
+- Webpack代码分割减少初始加载时间
+- Tree Shaking移除未使用代码
+- 动态导入按需加载功能模块
+- 资源压缩和缓存策略
 
 ## 10. 已知限制
 
@@ -245,14 +370,59 @@ src/
 
 ## 11. 未来改进方向
 
-- 实现群组聊天功能
-- 添加消息持久化机制
-- 支持语音和视频通话
-- 优化移动设备体验
-- 添加端到端的文件加密完整性验证
-- 实现自定义STUN/TURN服务器配置
-- 添加离线消息队列支持
+### 11.1 功能扩展
+
+- **群组聊天功能**：基于现有Zustand store扩展群组管理
+- **语音和视频通话**：使用useMediaCall Hook封装通话逻辑
+- **离线消息支持**：使用IndexedDB和useOfflineMessages Hook
+- **消息持久化机制**：本地存储和云端同步
+- **文件加密完整性验证**：添加数字签名验证
+
+### 11.2 架构优化
+
+- **微前端架构**：模块化部署和独立开发
+- **Service Worker**：离线支持和后台同步
+- **PWA支持**：渐进式Web应用特性
+- **TypeScript迁移**：类型安全和开发体验提升
+- **测试覆盖**：单元测试、集成测试、E2E测试
+
+### 11.3 用户体验
+
+- **移动端优化**：响应式设计和触摸交互
+- **主题系统**：深色模式和自定义主题
+- **国际化支持**：多语言界面
+- **无障碍访问**：ARIA标签和键盘导航
+- **性能监控**：用户体验指标收集
+
+### 11.4 技术升级
+
+- **React 19**：最新React特性支持
+- **Vite构建工具**：更快的开发和构建体验
+- **WebAssembly**：高性能加密算法
+- **WebCodecs API**：高效音视频处理
+- **自定义STUN/TURN服务器**：企业级部署支持
 
 ## 12. 结论
 
-P2P聊天系统提供了一个安全、高效的点对点通信解决方案，通过WebRTC技术和端到端加密实现了直接的安全通信。系统支持文本消息和各类文件的传输，并提供良好的用户体验和连接稳定性保障。通过分块传输和二进制数据处理，成功解决了WebRTC通道大小限制问题，使用户可以安全传输大型文件。系统架构清晰，代码组织良好，为未来功能扩展提供了坚实基础。 
+P2P聊天系统采用现代化的React架构模式，提供了一个安全、高效、可扩展的点对点通信解决方案。通过Container/UI分离、自定义Hooks、Zustand状态管理等现代前端架构模式，实现了清晰的代码组织和良好的可维护性。
+
+### 12.1 技术亮点
+
+- **现代化架构**：Container/UI分离提高代码复用性和可测试性
+- **Hooks模式**：业务逻辑封装和状态管理优化
+- **多服务器重试**：提高连接成功率和系统稳定性
+- **端到端加密**：基于Web Crypto API的安全通信
+- **文件传输优化**：分块传输和进度反馈
+- **状态管理**：Zustand轻量级状态管理支持复杂场景
+
+### 12.2 架构优势
+
+- **可扩展性**：模块化设计便于功能扩展
+- **可维护性**：清晰的层次结构和职责分离
+- **可测试性**：Hooks和纯函数便于单元测试
+- **性能优化**：多层次的性能优化策略
+- **用户体验**：现代化UI和流畅的交互体验
+
+### 12.3 未来展望
+
+系统架构为群聊、音视频通话、离线消息等高级功能提供了坚实基础。通过持续的技术升级和用户体验优化，将成为一个功能完整、性能优异的企业级P2P通信平台。
