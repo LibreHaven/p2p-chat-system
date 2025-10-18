@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import peerService from '../services/peerService';
 import { encryptionService } from '../services/encryptionService';
+import useConnectionToasts from './connection/useConnectionToasts';
+import useConnectionValidation from './connection/useConnectionValidation';
+import generateDisplayId from '../utils/generateDisplayId';
 
 const useConnection = ({
   peerId,
@@ -31,10 +34,8 @@ const useConnection = ({
   const [hasHandledEncryptionReady, setHasHandledEncryptionReady] = useState(false);
   
   // 验证和错误处理
-  const [customIdError, setCustomIdError] = useState('');
-  const [targetIdError, setTargetIdError] = useState('');
-  const [showToast, setShowToast] = useState(false);
-  const [toastMessage, setToastMessage] = useState('');
+  const { customIdError, targetIdError, validateCustomId, validateTargetId, setCustomIdError, setTargetIdError } = useConnectionValidation();
+  const { showToast, toastMessage, displayToast } = useConnectionToasts();
   
   // 引用
   const reconnectTimeoutRef = useRef(null);
@@ -45,36 +46,8 @@ const useConnection = ({
   const currentEncryptionRetries = useRef(0);
   
   // 显示 Toast 消息
-  const onDisplayToast = useCallback((message) => {
-    setToastMessage(message);
-    setShowToast(true);
-    setTimeout(() => setShowToast(false), 3000);
-  }, []);
-  
-  // 验证方法
-  const validateCustomId = useCallback((id) => {
-    const idRegex = /^[a-zA-Z0-9_-]{3,12}$/;
-    const isValid = idRegex.test(id);
-    setCustomIdError(isValid ? '' : 'ID必须是3-12位的字母、数字、下划线或连字符');
-    return isValid;
-  }, []);
-  
-  const validateTargetId = useCallback((id) => {
-    const idRegex = /^[a-zA-Z0-9_-]{3,12}$/;
-    const isValid = idRegex.test(id);
-    setTargetIdError(isValid ? '' : '目标ID必须是3-12位的字母、数字、下划线或连字符');
-    return isValid;
-  }, []);
-  
   // 生成随机ID
-  const generateRandomId = useCallback(() => {
-    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let result = '';
-    for (let i = 0; i < 8; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
-  }, []);
+  const generateRandomId = useCallback(() => generateDisplayId(), []);
   
   // 处理接收到的数据
   const handleReceivedData = useCallback((data) => {
@@ -148,7 +121,7 @@ const useConnection = ({
       console.log('连接请求被拒绝');
       setWaitingForAcceptance(false);
       setConnectionStatus('failed');
-      onDisplayToast('连接请求被拒绝');
+  displayToast('连接请求被拒绝');
     } else {
       // 非连接相关的消息，转发给useChatSession处理
       console.log('useConnection: 转发非连接消息给useChatSession:', parsedData.type);
@@ -194,7 +167,7 @@ const useConnection = ({
         setTimeout(checkHandler, 50);
       }
     }
-  }, [targetId, useEncryption, onConnectionSuccess, onDisplayToast]);
+  }, [targetId, useEncryption, onConnectionSuccess, displayToast]);
   
   // 注册全局连接处理函数
   useEffect(() => {
@@ -231,15 +204,15 @@ const useConnection = ({
           // ID冲突时不重置连接状态，避免重试
           setCustomIdError(`ID "${peerId}" 已被占用，请尝试其他ID或使用随机ID`);
           const suggestedId = generateRandomId();
-          onDisplayToast(`ID已被占用，建议使用: ${suggestedId}`);
+          displayToast(`ID已被占用，建议使用: ${suggestedId}`);
         } else {
           // 只有非ID冲突错误才重置连接状态，为重试做准备
           peerService.resetConnectionState();
           
           if (error.message && error.message.includes('无法连接到PeerJS服务器')) {
-            onDisplayToast('无法连接到服务器，请检查网络连接后重试');
+            displayToast('无法连接到服务器，请检查网络连接后重试');
           } else {
-            onDisplayToast('连接失败，请重试');
+            displayToast('连接失败，请重试');
           }
         }
       },
@@ -280,12 +253,12 @@ const useConnection = ({
     });
     
     setPeer(peer);
-  }, [peerId, validateCustomId, generateRandomId, onDisplayToast, handleReceivedData]);
+  }, [peerId, validateCustomId, generateRandomId, displayToast, handleReceivedData]);
   
   // 连接到目标Peer
   const connectToPeer = useCallback(() => {
     if (!peer) {
-      onDisplayToast('请先创建自己的 Peer 连接');
+      displayToast('请先创建自己的 Peer 连接');
       return;
     }
     
@@ -305,7 +278,7 @@ const useConnection = ({
     if (!conn) {
       setConnectionStatus('failed');
       setWaitingForAcceptance(false);
-      onDisplayToast('连接失败，请重试');
+      displayToast('连接失败，请重试');
       return;
     }
     
@@ -328,7 +301,7 @@ const useConnection = ({
             console.log('连接请求超时');
             setWaitingForAcceptance(false);
             setConnectionStatus('failed');
-            onDisplayToast('连接请求超时，请重试');
+            displayToast('连接请求超时，请重试');
           }
         }, 30000);
         
@@ -347,10 +320,10 @@ const useConnection = ({
         console.error('连接错误:', error);
         setConnectionStatus('failed');
         setWaitingForAcceptance(false);
-        onDisplayToast('连接出现错误');
+        displayToast('连接出现错误');
       }
     });
-  }, [peer, targetId, useEncryption, peerId, validateTargetId, onDisplayToast, handleReceivedData, waitingForAcceptance]);
+  }, [peer, targetId, useEncryption, peerId, validateTargetId, displayToast, handleReceivedData, waitingForAcceptance]);
   
   // 接受连接
   const acceptConnection = useCallback((connectionToAccept = null) => {
@@ -443,13 +416,13 @@ const useConnection = ({
       setIncomingPeerId('');
       setIncomingUseEncryption(false);
       
-      onDisplayToast('已拒绝连接请求');
+  displayToast('已拒绝连接请求');
     } else {
       console.warn('没有找到要拒绝的连接');
       // 即使没有连接也要关闭弹窗
       setShowConnectionRequest(false);
     }
-  }, [incomingConnection, onDisplayToast]);
+  }, [incomingConnection, displayToast]);
   
   // 清理函数
   useEffect(() => {
