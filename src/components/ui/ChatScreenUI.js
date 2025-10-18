@@ -381,6 +381,7 @@ const ChatScreenUI = ({
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const videoInputRef = useRef(null);
+  const encryptionGateActive = useEncryption && !encryptionReady;
   
   // Auto scroll to bottom when messages change
   useEffect(() => {
@@ -442,7 +443,10 @@ const ChatScreenUI = ({
         <FileProgressContainer>
           <FileProgressBar $progress={fileTransferProgress} />
         </FileProgressContainer>
-        <SendButton onClick={onSendFile} disabled={isTransferringFile || !encryptionReady}>
+        <SendButton
+          onClick={onSendFile}
+          disabled={isTransferringFile || connectionLost || encryptionGateActive}
+        >
           {isTransferringFile ? <FiLoader /> : <FiSend />}
           {isTransferringFile ? '发送中...' : '发送文件'}
         </SendButton>
@@ -547,21 +551,21 @@ const ChatScreenUI = ({
         <Tooltip title="发送文件">
           <StyledFileButton 
             onClick={() => fileInputRef.current.click()} 
-            disabled={connectionLost || !encryptionReady}
+            disabled={connectionLost || encryptionGateActive}
             icon={<FiFile />}
           />
         </Tooltip>
         <Tooltip title="发送图片">
           <StyledFileButton 
             onClick={() => imageInputRef.current.click()} 
-            disabled={connectionLost || !encryptionReady}
+            disabled={connectionLost || encryptionGateActive}
             icon={<FiImage />}
           />
         </Tooltip>
         <Tooltip title="发送视频">
           <StyledFileButton 
             onClick={() => videoInputRef.current.click()} 
-            disabled={connectionLost || !encryptionReady}
+            disabled={connectionLost || encryptionGateActive}
             icon={<FiVideo />}
           />
         </Tooltip>
@@ -578,13 +582,13 @@ const ChatScreenUI = ({
           onChange={(e) => onMessageChange(e.target.value)}
           onKeyPress={onKeyPress}
           placeholder="输入消息..."
-          disabled={connectionLost || !encryptionReady}
+          disabled={connectionLost || encryptionGateActive}
           style={{ marginRight: '10px' }}
         />
         <StyledSendButton 
           type="primary"
           onClick={onSendMessage} 
-          disabled={!message.trim() || connectionLost || !encryptionReady}
+          disabled={!message.trim() || connectionLost || encryptionGateActive}
           icon={<FiSend />}
         />
       </InputContainer>
