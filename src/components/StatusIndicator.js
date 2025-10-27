@@ -1,7 +1,7 @@
 import React from 'react';
-import styled, { keyframes, css } from 'styled-components';
+import styled from 'styled-components';
 import { FiCheck, FiX, FiLoader } from 'react-icons/fi';
-import { Badge, Tag, Spin } from 'antd';
+import { Tag, Spin } from 'antd';
 
 // Styled Ant Design components for status indicator
 const StyledTag = styled(Tag)`
@@ -16,62 +16,7 @@ const StyledTag = styled(Tag)`
   }
 `;
 
-const rotate = keyframes`
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-`;
-
-const Container = styled.div`
-  display: flex;
-  align-items: center;
-  padding: 10px;
-  border-radius: 4px;
-  background-color: ${props => {
-    switch (props.$status) {
-      case 'connected': return '#e6f7e6';
-      case 'connecting': return '#fff8e6';
-      case 'failed': return '#ffebee';
-      default: return '#f5f5f5';
-    }
-  }};
-`;
-
-const IconWrapper = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  margin-right: 10px;
-  color: ${props => {
-    switch (props.$status) {
-      case 'connected': return '#2ecc71';
-      case 'connecting': return '#f39c12';
-      case 'failed': return '#e74c3c';
-      default: return '#95a5a6';
-    }
-  }};
-  
-  ${props => props.$status === 'connecting' && css`
-    animation: ${rotate} 1.5s linear infinite;
-  `}
-`;
-
-const StatusText = styled.span`
-  font-size: 14px;
-  color: ${props => {
-    switch (props.$status) {
-      case 'connected': return '#27ae60';
-      case 'connecting': return '#d35400';
-      case 'failed': return '#c0392b';
-      default: return '#7f8c8d';
-    }
-  }};
-`;
+// 移除未使用的容器/图标包装/文本样式，保留标签展示即可
 
 const StatusIndicator = ({ status }) => {
   const getTagProps = () => {

@@ -7,20 +7,38 @@
 const utils = {
   arrayBufferToBase64(buffer) {
     const bytes = new Uint8Array(buffer);
-    let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i]);
+    // Prefer browser API when available
+    if (typeof window !== 'undefined' && typeof window.btoa === 'function') {
+      let binary = '';
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return window.btoa(binary);
     }
-    return window.btoa(binary);
+    // Node/SSR-safe fallback using Buffer
+    // Note: Buffer is available in Node and most Jest environments
+    if (typeof Buffer !== 'undefined') {
+      return Buffer.from(bytes).toString('base64');
+    }
+    // Ultimate fallback (should rarely happen)
+    throw new Error('Base64 encoding is not supported in the current environment');
   },
 
   base64ToArrayBuffer(base64) {
-    const binaryString = window.atob(base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
+    if (typeof window !== 'undefined' && typeof window.atob === 'function') {
+      const binaryString = window.atob(base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return bytes.buffer;
     }
-    return bytes.buffer;
+    if (typeof Buffer !== 'undefined') {
+      const buf = Buffer.from(base64, 'base64');
+      // Return a clean ArrayBuffer slice that matches the Buffer's actual data range
+      return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+    }
+    throw new Error('Base64 decoding is not supported in the current environment');
   },
 
   stringToArrayBuffer(str) {

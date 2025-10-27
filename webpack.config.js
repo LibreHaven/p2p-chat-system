@@ -22,8 +22,11 @@ module.exports = {
         use: ['style-loader', 'css-loader']
       },
       {
-        test: /\.(png|svg|jpg|gif)$/,
-        use: ['file-loader']
+        test: /\.(png|svg|jpe?g|gif)$/i,
+        type: 'asset/resource',
+        generator: {
+          filename: 'assets/[hash][ext][query]'
+        }
       }
     ]
   },
@@ -37,8 +40,19 @@ module.exports = {
   ],
   devServer: {
     historyApiFallback: true,
-    port: 3000,
-    open: true,
-    hot: true
+    // Allow overriding the dev server port via environment variable (e.g., PORT=3001)
+    port: process.env.PORT ? Number(process.env.PORT) : 3000,
+    static: path.resolve(__dirname, 'public'),
+    host: 'localhost',
+    allowedHosts: 'all',
+    client: {
+      overlay: true,
+      webSocketURL: 'auto://0.0.0.0:0/ws'
+    },
+    // Avoid auto-opening browser which can be flaky in some Windows setups
+    open: false,
+    hot: true,
+    // Prevent dev-server from auto-closing on parent signal glitches in some terminals
+    setupExitSignals: false
   }
 };

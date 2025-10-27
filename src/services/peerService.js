@@ -1,16 +1,14 @@
 import config from '../config';
 import PeerConnectionManager from './peer/PeerConnectionManager';
-import FileTransferManager from './peer/FileTransferManager';
-import MessageRouter from './peer/MessageRouter';
+// Note: File sending/receiving and message routing are now handled by
+// application/services (FileService, FileReceiveService, MessageRouter usage)
+// and session-level hooks. PeerService remains a thin compatibility layer for
+// creating peers, connecting, and safe message sending.
 
 class PeerService {
   constructor() {
     this.connectionManager = new PeerConnectionManager(config);
-    this.messageRouter = new MessageRouter();
     this.connection = null;
-    this.fileTransferManager = new FileTransferManager((connection, message) =>
-      this.sendMessageSafely(connection, message),
-    );
   }
 
   get peer() {
@@ -132,13 +130,7 @@ class PeerService {
     });
   }
 
-  async sendFile(connection, file, useEncryption, sharedSecret, callbacks = {}) {
-    await this.fileTransferManager.sendFile(connection, file, useEncryption, sharedSecret, callbacks);
-  }
-
-  async handleReceivedData(data, useEncryption, sharedSecret, callbacks = {}) {
-    await this.messageRouter.handle(data, useEncryption, sharedSecret, callbacks);
-  }
+  // File and message routing responsibilities have moved to application layer.
 }
 
 const peerServiceInstance = new PeerService();
@@ -182,12 +174,11 @@ export const connectToPeer = (peer, targetId) =>
 export const setupDataConnectionListeners = (conn, callbacks = {}) =>
   peerServiceInstance.setupDataConnectionListeners(conn, callbacks);
 
-export const checkConnectionStatus = (conn) => {
-  if (!conn) return 'disconnected';
-  if (conn.open) return 'connected';
-  if (conn.peerConnection?.iceConnectionState === 'connected') return 'connected';
-  return conn.peerConnection?.iceConnectionState || 'disconnected';
-};
+/**
+ * @deprecated Prefer reading status from ITransport.status() or directly from the
+ * underlying DataConnection (conn.open / conn.peerConnection.iceConnectionState).
+ * This helper remains for backward compatibility and may be removed in future refactors.
+ */
 
 export const reestablishConnection = (peer, targetId, callbacks = {}) => {
   if (!peer) {
@@ -212,11 +203,6 @@ const peerService = {
   connectToPeer: (...args) => peerServiceInstance.connectToPeer(...args),
   setupDataConnectionListeners,
   sendMessageSafely: (connection, message) => peerServiceInstance.sendMessageSafely(connection, message),
-  sendFile: (connection, file, useEncryption, sharedSecret, callbacks) =>
-    peerServiceInstance.sendFile(connection, file, useEncryption, sharedSecret, callbacks),
-  handleReceivedData: (data, useEncryption, sharedSecret, callbacks) =>
-    peerServiceInstance.handleReceivedData(data, useEncryption, sharedSecret, callbacks),
-  checkConnectionStatus,
   reestablishConnection,
   setupConnectionListeners,
 };

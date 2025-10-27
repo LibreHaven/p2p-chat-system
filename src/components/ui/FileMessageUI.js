@@ -1,7 +1,7 @@
 import React from 'react';
 import styled from 'styled-components';
 import { FiFile, FiImage, FiVideo } from 'react-icons/fi';
-import { utils } from '../../utils';
+import { Typography, Progress, Button as AntButton } from 'antd';
 
 const FileBubble = styled.div`
   max-width: 70%;
@@ -34,19 +34,7 @@ const FileIcon = styled.div`
   font-size: 24px;
 `;
 
-const FileName = styled.div`
-  font-size: 14px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 200px;
-`;
-
-const FileSize = styled.div`
-  font-size: 12px;
-  color: ${props => props.$isSelf ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.6)'};
-  margin-top: 2px;
-`;
+// 移除未使用的 FileName/FileSize，改用 Ant Typography.Text 统一文本样式
 
 const FilePreview = styled.div`
   margin-top: 10px;
@@ -69,12 +57,8 @@ const FilePreviewVideo = styled.video`
   border-radius: 4px;
 `;
 
-const FileDownloadLink = styled.a`
-  color: #4a90e2;
-  text-decoration: underline;
-  margin-top: 5px;
-  cursor: pointer;
-  display: block;
+const StyledButton = styled(AntButton)`
+  margin-top: 8px;
 `;
 
 const ProgressText = styled.div`
@@ -92,13 +76,15 @@ const MessageTime = styled.span`
   text-align: right;
 `;
 
+const { Text } = Typography;
+
 const FileMessageUI = ({ message, isSelf, formatTime, formatFileSize, progress = 0 }) => {
   // 文件消息的内容是一个对象，包含文件信息
   const file = message.content;
   const isReceiving = message.isFileReceiving;
   
   return (
-    <StyledCard $isSelf={isSelf} size="small" bordered={false}>
+    <FileBubble $isSelf={isSelf}>
       <FileContent>
         <FileInfo>
           <FileIcon>
@@ -145,15 +131,8 @@ const FileMessageUI = ({ message, isSelf, formatTime, formatFileSize, progress =
         )}
       </FileContent>
       <MessageTime>{formatTime(message.timestamp)}</MessageTime>
-    </StyledCard>
+    </FileBubble>
   );
 };
 
 export default FileMessageUI;
-
-
-// 使用formatFileSize格式化文件大小
-const formattedSize = utils.formatFileSize(file.size);
-
-// 使用formatTime格式化时间戳
-const formattedTime = utils.formatTime(message.timestamp);

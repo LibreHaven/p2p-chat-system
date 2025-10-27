@@ -1,16 +1,27 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import peerService from '../services/peerService';
-import { encryptionService } from '../services/encryptionService';
+import PeerTransport from '../infrastructure/transport/PeerTransport';
+import PeerConnectionTransport from '../infrastructure/transport/PeerConnectionTransport';
+import { createSafeSender } from '../utils/safeSend';
+// import { encryptionService } from '../services/encryptionService';
 import useConnectionToasts from './connection/useConnectionToasts';
 import useConnectionValidation from './connection/useConnectionValidation';
 import generateDisplayId from '../utils/generateDisplayId';
+import eventBus from '../shared/eventBus';
+import { Events } from '../shared/events';
+import attachStatusChangeTelemetry from '../observability/statusChangeTracker';
+import useChatSessionStore from '../shared/store/chatSessionStore';
+import storage from '../shared/storage/session';
+// import { createEnvelope, MessageTypes } from '../shared/messages/envelope';
+import { scheduleAcceptanceTimeout } from './connection/connectionLifecycleHelpers';
+import { startConnectionRequestFlow, acceptIncomingConnectionFlow, rejectIncomingConnectionFlow, handleRemoteCloseFlow, handleRemoteErrorFlow, handleIncomingConnectionData } from '../application/services/ConnectionService';
 
 const useConnection = ({
   peerId,
-  setPeerId,
+  setPeerId: _setPeerId,
   setMessages,
   onConnectionSuccess,
-  onConnectionError
+  onConnectionError: _onConnectionError
 }) => {
   // 连接状态
   const [peer, setPeer] = useState(null);
@@ -20,18 +31,14 @@ const useConnection = ({
   const [incomingConnection, setIncomingConnection] = useState(null);
   const [incomingPeerId, setIncomingPeerId] = useState('');
   const [waitingForAcceptance, setWaitingForAcceptance] = useState(false);
-  const [pendingConnection, setPendingConnection] = useState(null);
   const [isPeerCreated, setIsPeerCreated] = useState(false);
-  const [isConnectionInitiator, setIsConnectionInitiator] = useState(false);
   
   // 在 hook 内部管理 targetId 状态
   const [targetId, setTargetId] = useState('');
   
   // 加密状态
-  const [encryptionReady, setEncryptionReady] = useState(false);
   const [useEncryption, setUseEncryption] = useState(true);
   const [incomingUseEncryption, setIncomingUseEncryption] = useState(false);
-  const [hasHandledEncryptionReady, setHasHandledEncryptionReady] = useState(false);
   
   // 验证和错误处理
   const { customIdError, targetIdError, validateCustomId, validateTargetId, setCustomIdError, setTargetIdError } = useConnectionValidation();
@@ -42,8 +49,14 @@ const useConnection = ({
   const encryptionReadyConfirmationTimeoutRef = useRef(null);
   const currentIncomingConnectionRef = useRef(null);
   const activeConnectionRef = useRef(null);
-  const maxEncryptionRetries = useRef(3);
-  const currentEncryptionRetries = useRef(0);
+  const incomingTransportRef = useRef(null);
+  const outgoingTransportRef = useRef(null);
+  // 移除未使用的重试计数，保留最小引用集
+
+  // Store 同步：最终协商的加密开关写入全局 Store，供会话层与 UI 读取
+  const setStoreFinalUseEncryption = useChatSessionStore((s) => s.setFinalUseEncryption);
+  const setStoreIsInitiator = useChatSessionStore((s) => s.setIsInitiator);
+  const storeIsInitiator = useChatSessionStore((s) => s.isInitiator);
   
   // 显示 Toast 消息
   // 生成随机ID
@@ -52,130 +65,33 @@ const useConnection = ({
   // 处理接收到的数据
   const handleReceivedData = useCallback((data) => {
     console.log('useConnection handleReceivedData - Received data:', data);
-    console.log('Data type:', typeof data);
-    console.log('Data is string:', typeof data === 'string');
-    
-    // 如果接收到的是字符串，尝试解析为JSON
-    let parsedData = data;
-    if (typeof data === 'string') {
-      try {
-        parsedData = JSON.parse(data);
-        console.log('Parsed JSON data:', parsedData);
-      } catch (e) {
-        console.log('Data is not JSON, treating as raw data:', data);
-        // 如果不是JSON，直接转发给chatSessionHandler处理
-        if (window.chatSessionHandler && typeof window.chatSessionHandler === 'function') {
-          console.log('chatSessionHandler类型:', typeof window.chatSessionHandler);
-          try {
-            window.chatSessionHandler(data);
-            console.log('chatSessionHandler调用成功');
-          } catch (error) {
-            console.error('chatSessionHandler调用失败:', error);
-          }
-        } else {
-          // 缓存原始数据
-          console.log('chatSessionHandler未准备好，缓存原始数据:', data);
-          console.log('当前window.chatSessionHandler值:', window.chatSessionHandler);
-          if (!window.pendingChatMessages) {
-            window.pendingChatMessages = [];
-          }
-          window.pendingChatMessages.push(data);
-        }
-        return;
-      }
-    }
-    
-    // 只处理连接相关的消息，其他消息转发给useChatSession
-    if (parsedData.type === 'connection-request') {
-      // 接收到连接请求
-      console.log('收到连接请求:', parsedData.peerId);
-      console.log('接收方收到的完整数据:', parsedData);
-      console.log('接收方收到的加密状态:', parsedData.useEncryption);
-      console.log('useEncryption类型:', typeof parsedData.useEncryption);
-      console.log('原始数据字符串:', JSON.stringify(parsedData));
-      setIncomingConnection(activeConnectionRef.current);
-      setIncomingPeerId(parsedData.peerId);
-      const receivedEncryption = parsedData.useEncryption !== undefined ? parsedData.useEncryption : false;
-      console.log('设置的incomingUseEncryption值:', receivedEncryption);
-      setIncomingUseEncryption(receivedEncryption);
-      setShowConnectionRequest(true);
-    } else if (parsedData.type === 'connection-accepted') {
-      // 连接被接受，发送方进入聊天界面
-      console.log('连接请求被接受');
-      console.log('发起方收到的完整响应数据:', parsedData);
-      console.log('发起方收到的加密状态详情:', {
-        '本地useEncryption': useEncryption,
-        '接收方返回的useEncryption': parsedData.useEncryption,
-        'useEncryption类型': typeof parsedData.useEncryption,
-        '完整parsedData': JSON.stringify(parsedData)
-      });
-      setWaitingForAcceptance(false);
-      setConnectionStatus('connected');
-      // 使用响应中的加密状态，这是双方协商后的最终结果
-      const finalUseEncryption = parsedData.useEncryption;
-      console.log('最终协商的加密状态:', finalUseEncryption, '类型:', typeof finalUseEncryption);
-      sessionStorage.setItem('useEncryption', finalUseEncryption ? 'true' : 'false');
-      onConnectionSuccess?.(activeConnectionRef.current, targetId, finalUseEncryption);
-    } else if (parsedData.type === 'connection-rejected') {
-      // 连接被拒绝
-      console.log('连接请求被拒绝');
-      setWaitingForAcceptance(false);
-      setConnectionStatus('failed');
-  displayToast('连接请求被拒绝');
-    } else {
-      // 非连接相关的消息，转发给useChatSession处理
-      console.log('useConnection: 转发非连接消息给useChatSession:', parsedData.type);
-      if (window.chatSessionHandler && typeof window.chatSessionHandler === 'function') {
-        // 传递原始数据，而不是解析后的数据对象
-        console.log('转发原始数据给chatSessionHandler:', data);
-        console.log('chatSessionHandler类型:', typeof window.chatSessionHandler);
-        try {
-          window.chatSessionHandler(data);
-          console.log('chatSessionHandler调用成功');
-        } catch (error) {
-          console.error('chatSessionHandler调用失败:', error);
-        }
-      } else {
-        // 缓存消息，等待chatSessionHandler注册
-        console.log('chatSessionHandler not ready, caching message:', parsedData.type);
-        console.log('当前window.chatSessionHandler值:', window.chatSessionHandler);
-        if (!window.pendingChatMessages) {
-          window.pendingChatMessages = [];
-        }
-        // 缓存原始数据，而不是解析后的数据对象
-        window.pendingChatMessages.push(data);
-        
-        // 设置定时器检查chatSessionHandler是否已注册
-        const checkHandler = () => {
-          if (window.chatSessionHandler && typeof window.chatSessionHandler === 'function') {
-            console.log('chatSessionHandler now available, processing cached messages');
-            const messages = window.pendingChatMessages || [];
-            window.pendingChatMessages = [];
-            messages.forEach(msg => {
-              try {
-                // msg是原始数据，直接传递
-                window.chatSessionHandler(msg);
-              } catch (error) {
-                console.error('Error processing cached message:', error);
-              }
-            });
-          } else {
-            // 继续等待，但设置最大等待时间
-            setTimeout(checkHandler, 100);
-          }
-        };
-        setTimeout(checkHandler, 50);
-      }
-    }
-  }, [targetId, useEncryption, onConnectionSuccess, displayToast]);
+    const res = handleIncomingConnectionData({
+      setIncomingConnection,
+      setIncomingPeerId,
+      setIncomingUseEncryption,
+      setShowConnectionRequest,
+      setWaitingForAcceptance,
+      setConnectionStatus,
+      storage,
+      setStoreFinalUseEncryption,
+      onConnectionSuccess,
+      activeConnection: activeConnectionRef.current,
+      targetId,
+      displayToast,
+    }, data);
+
+    // 非连接类消息由会话层 useChatSession 直接从连接/transport 接收并处理，
+    // 这里不再通过事件总线转发，避免重复处理导致消息显示两遍。
+    // if (!res?.handled) { /* no-op */ }
+  }, [targetId, onConnectionSuccess, displayToast, setStoreFinalUseEncryption]);
   
-  // 注册全局连接处理函数
+  // 订阅连接类消息：useChatSession 会通过事件总线转发 connection-* 类型
   useEffect(() => {
-    window.connectionHandler = handleReceivedData;
-    return () => {
-      window.connectionHandler = null;
-    };
+  const off = eventBus.on(Events.CONNECTION_INCOMING, handleReceivedData);
+    return () => off?.();
   }, [handleReceivedData]);
+
+  // 移除 CHAT_OUTGOING 代理发送：会话层已具备安全回退发送能力，无需双通道
 
   // 创建 Peer 连接
   const createPeerConnection = useCallback(() => {
@@ -193,7 +109,7 @@ const useConnection = ({
         console.log('Peer连接已建立，ID:', id);
         setIsPeerCreated(true);
         setConnectionStatus('connected');
-        sessionStorage.setItem('peerId', id);
+        storage.setItem('peerId', id);
       },
       onError: (error) => {
         console.error('Peer 连接错误:', error);
@@ -218,28 +134,51 @@ const useConnection = ({
       },
       onConnection: (conn) => {
         console.log('收到连接请求:', conn.peer);
-        
-        // 为接收到的连接设置数据监听器 - 使用统一的监听器设置函数
-        peerService.setupDataConnectionListeners(conn, {
-          onData: (data) => {
-            console.log('接收方收到数据:', data);
+        // 使用接入层 transport 统一接线（灰度路径），外部行为不变
+        try {
+          const transport = new PeerConnectionTransport(conn);
+          incomingTransportRef.current = transport;
+          // 将活动连接指向该传入连接，供后续消息处理与接受流程使用
+          activeConnectionRef.current = conn;
+          // telemetry: status change tracking for incoming connection
+          attachStatusChangeTelemetry({ transport, where: 'connection:incoming' });
+          transport.on('open', () => {
+            console.log('[PeerConnectionTransport] 接收方连接已打开');
+            eventBus.emit?.(Events.TELEMETRY_CONNECTION, { where: 'connection:incoming', type: 'open', ts: Date.now() });
+          });
+          transport.on('message', (data) => {
+            console.log('[PeerConnectionTransport] 接收方收到数据:', data);
             handleReceivedData(data);
-          },
-          onOpen: () => {
-            console.log('接收方连接已打开');
-          },
-          onClose: () => {
-            console.log('接收方连接已关闭');
-          },
-          onError: (error) => {
-            console.error('接收方连接错误:', error);
-          }
-        });
+          });
+          transport.on('close', () => {
+            console.log('[PeerConnectionTransport] 接收方连接已关闭');
+            eventBus.emit?.(Events.TELEMETRY_CONNECTION, { where: 'connection:incoming', type: 'close', ts: Date.now() });
+          });
+          transport.on('error', (error) => {
+            console.error('[PeerConnectionTransport] 接收方连接错误:', error);
+            eventBus.emit?.(Events.TELEMETRY_CONNECTION, { where: 'connection:incoming', type: 'error', ts: Date.now(), message: String(error?.message || error || '') });
+          });
+        } catch (e) {
+          console.warn('[PeerConnectionTransport] 初始化失败，使用原有监听器回退:', e?.message || e);
+          peerService.setupDataConnectionListeners(conn, {
+            onData: (data) => {
+              console.log('接收方收到数据:', data);
+              handleReceivedData(data);
+            },
+            onOpen: () => {
+              console.log('接收方连接已打开');
+            },
+            onClose: () => {
+              console.log('接收方连接已关闭');
+            },
+            onError: (error) => {
+              console.error('接收方连接错误:', error);
+            }
+          });
+        }
         
-        // 同时更新ref和状态
+        // 仅更新引用，等待真正的 connection-request 消息到达后再展示弹窗
         currentIncomingConnectionRef.current = conn;
-        setIncomingConnection(conn);
-        setShowConnectionRequest(true);
       },
       onDisconnected: () => {
         console.log('Peer 连接已断开');
@@ -269,43 +208,31 @@ const useConnection = ({
     if (!validateTargetId(targetId)) return;
     
     setConnectionStatus('connecting');
-    setWaitingForAcceptance(true);
-    setIsConnectionInitiator(true);
-    sessionStorage.setItem('isInitiator', 'true');
-    sessionStorage.setItem('useEncryption', useEncryption ? 'true' : 'false');
+  setWaitingForAcceptance(true);
+  storage.setItem('isInitiator', 'true');
+  setStoreIsInitiator(true);
+  storage.setBool('useEncryption', !!useEncryption);
     
-    const conn = peerService.connectToPeer(peer, targetId);
-    if (!conn) {
-      setConnectionStatus('failed');
-      setWaitingForAcceptance(false);
-      displayToast('连接失败，请重试');
-      return;
-    }
-    
-    setPendingConnection(conn);
-    activeConnectionRef.current = conn;
-    
-    peerService.setupDataConnectionListeners(conn, {
+    const wireListeners = (connLike) => {
+      activeConnectionRef.current = connLike;
+      peerService.setupDataConnectionListeners(connLike, {
       onOpen: () => {
         console.log('数据连接已打开，发送连接请求');
         console.log('发起方发送的加密状态:', useEncryption);
-        peerService.sendMessageSafely(conn, {
-          type: 'connection-request',
-          peerId: peerId,
-          useEncryption: useEncryption,
-          timestamp: Date.now()
+        const primary = (_c, data) => outgoingTransportRef.current?.send?.(data);
+        const fallback = (c, data) => peerService.sendMessageSafely(c, data);
+        const safeSend = createSafeSender(primary, fallback);
+        const timeoutId = startConnectionRequestFlow(safeSend, connLike, {
+          peerId,
+          useEncryption: !!useEncryption,
+          waitingForAcceptanceGetter: () => waitingForAcceptance,
+          setWaitingForAcceptance,
+          setConnectionStatus,
+          displayToast,
+          scheduleAcceptanceTimeout,
+          timeoutMs: 30000,
         });
-        
-        const timeout = setTimeout(() => {
-          if (waitingForAcceptance) {
-            console.log('连接请求超时');
-            setWaitingForAcceptance(false);
-            setConnectionStatus('failed');
-            displayToast('连接请求超时，请重试');
-          }
-        }, 30000);
-        
-        setConnectionTimeout(timeout);
+        setConnectionTimeout(timeoutId);
       },
       onData: (data) => {
         console.log('发起方收到数据:', data);
@@ -313,16 +240,89 @@ const useConnection = ({
       },
       onClose: () => {
         console.log('连接已关闭');
-        setConnectionStatus('disconnected');
-        setWaitingForAcceptance(false);
+        handleRemoteCloseFlow({ setConnectionStatus, setWaitingForAcceptance });
       },
       onError: (error) => {
         console.error('连接错误:', error);
+        handleRemoteErrorFlow({ setConnectionStatus, setWaitingForAcceptance, displayToast });
+      }
+      });
+    };
+    
+    const wireTransportListeners = (transport) => {
+      outgoingTransportRef.current = transport;
+      const onOpen = () => {
+        console.log('[PeerTransport] 数据连接已打开');
+  eventBus.emit?.(Events.TELEMETRY_CONNECTION, { where: 'connection:outgoing', type: 'open', ts: Date.now() });
+        console.log('发起方发送的加密状态:', useEncryption);
+        const connLike = transport.conn;
+        activeConnectionRef.current = connLike;
+        const primary = (_c, data) => transport.send?.(data);
+        const fallback = (c, data) => peerService.sendMessageSafely(c, data);
+        const safeSend = createSafeSender(primary, fallback);
+        const timeoutId = startConnectionRequestFlow(safeSend, connLike, {
+          peerId,
+          useEncryption: !!useEncryption,
+          waitingForAcceptanceGetter: () => waitingForAcceptance,
+          setWaitingForAcceptance,
+          setConnectionStatus,
+          displayToast,
+          scheduleAcceptanceTimeout,
+          timeoutMs: 30000,
+        });
+        setConnectionTimeout(timeoutId);
+      };
+      const onMessage = (data) => {
+        console.log('[PeerTransport] 收到数据:', data);
+        handleReceivedData(data);
+      };
+      const onClose = () => {
+        console.log('[PeerTransport] 连接已关闭');
+  eventBus.emit?.(Events.TELEMETRY_CONNECTION, { where: 'connection:outgoing', type: 'close', ts: Date.now() });
+        handleRemoteCloseFlow({ setConnectionStatus, setWaitingForAcceptance });
+      };
+      const onError = (error) => {
+        console.error('[PeerTransport] 连接错误:', error);
+  eventBus.emit?.(Events.TELEMETRY_CONNECTION, { where: 'connection:outgoing', type: 'error', ts: Date.now(), message: String(error?.message || error || '') });
+        handleRemoteErrorFlow({ setConnectionStatus, setWaitingForAcceptance, displayToast });
+      };
+      // 绑定事件，并提供解绑定以备未来清理使用（当前保持一致行为，组件卸载时 reset 状态即可）
+      transport.on('open', onOpen);
+      transport.on('message', onMessage);
+      transport.on('close', onClose);
+      transport.on('error', onError);
+      // telemetry: status change tracking for outgoing connection
+      attachStatusChangeTelemetry({ transport, where: 'connection:outgoing' });
+    };
+
+    // 灰度接入 PeerTransport：优先尝试使用适配器；失败则回退到 peerService
+    (async () => {
+      try {
+        const transport = new PeerTransport();
+        // 先绑定监听，避免错过 open 事件（open 内需要发送 connection-request）
+        wireTransportListeners(transport);
+        await transport.connect(targetId);
+        if (transport.conn) {
+          console.log('[PeerTransport] 连接建立（灰度通道）');
+          setConnectionStatus('connecting');
+          // 已提前绑定监听，这里不再重复绑定
+          return;
+        }
+        console.warn('[PeerTransport] 连接未返回底层连接对象，回退到 peerService');
+      } catch (e) {
+        console.warn('[PeerTransport] 连接失败，回退到 peerService:', e?.message || e);
+      }
+
+      const conn = peerService.connectToPeer(peer, targetId);
+      if (!conn) {
         setConnectionStatus('failed');
         setWaitingForAcceptance(false);
-        displayToast('连接出现错误');
+        displayToast('连接失败，请重试');
+        return;
       }
-    });
+      console.log('[peerService] 连接建立（回退通道）');
+      wireListeners(conn);
+    })();
   }, [peer, targetId, useEncryption, peerId, validateTargetId, displayToast, handleReceivedData, waitingForAcceptance]);
   
   // 接受连接
@@ -344,38 +344,31 @@ const useConnection = ({
       
       // 接收方不是连接发起方
       // 注意：不要覆盖发起方的 isInitiator 状态
-      if (sessionStorage.getItem('isInitiator') !== 'true') {
-        sessionStorage.setItem('isInitiator', 'false');
+      if (storeIsInitiator !== true) {
+        storage.setItem('isInitiator', 'false');
+        setStoreIsInitiator(false);
       }
-      // 只有双方都启用加密时才使用加密
-      console.log('接收方加密状态协商:', {
-        '本地useEncryption': useEncryption,
-        '发起方useEncryption': incomingUseEncryption,
-        '最终结果': useEncryption && incomingUseEncryption
+      // 构建安全发送器（transport 优先 + 回退）
+      const primary = (_conn, data) => incomingTransportRef.current?.send?.(data);
+      const fallback = (conn, data) => peerService.sendMessageSafely(conn, data);
+      const safeSend = createSafeSender(primary, fallback);
+      // 通过服务编排接受流程（协商加密、存储、发送 accepted、回调成功）
+      const { finalUseEncryption } = acceptIncomingConnectionFlow(safeSend, connectionToUse, {
+        peerId,
+        localUseEncryption: !!useEncryption,
+        incomingUseEncryption: !!incomingUseEncryption,
+        storage,
+        setStoreFinalUseEncryption,
+        onConnectionSuccess,
+        remotePeerId: incomingPeerId,
       });
-      const finalUseEncryption = useEncryption && incomingUseEncryption;
-      sessionStorage.setItem('useEncryption', finalUseEncryption ? 'true' : 'false');
-      
-      // 发送接受消息给发送方
-      console.log('接收方发送connection-accepted，useEncryption:', finalUseEncryption);
-      const acceptedMessage = {
-        type: 'connection-accepted',
-        peerId: peerId,
-        useEncryption: finalUseEncryption, // 使用协商后的最终加密设置
-        timestamp: Date.now()
-      };
-      console.log('接收方发送的完整消息:', acceptedMessage);
-      console.log('消息序列化后:', JSON.stringify(acceptedMessage));
-      peerService.sendMessageSafely(connectionToUse, acceptedMessage);
-      
-      // 建立连接成功 - 使用之前计算的最终加密状态
-      onConnectionSuccess?.(connectionToUse, incomingPeerId, finalUseEncryption);
+      console.log('接收方加密状态协商完成，最终结果:', finalUseEncryption);
       
       // 清理连接状态
       currentIncomingConnectionRef.current = null;
       setIncomingConnection(null);
       setIncomingPeerId('');
-      setIncomingUseEncryption(false);
+  setIncomingUseEncryption(false);
     } else {
       console.log('无法接受连接：connectionToUse为空');
     }
@@ -394,20 +387,10 @@ const useConnection = ({
     if (connectionToReject) {
       console.log('拒绝连接请求');
       
-      try {
-        peerService.sendMessageSafely(connectionToReject, {
-          type: 'connection-rejected',
-          timestamp: Date.now()
-        });
-      } catch (error) {
-        console.warn('发送拒绝消息失败:', error);
-      }
-      
-      try {
-        connectionToReject.close();
-      } catch (error) {
-        console.warn('关闭连接失败:', error);
-      }
+      const primary = (_conn, data) => incomingTransportRef.current?.send?.(data);
+      const fallback = (conn, data) => peerService.sendMessageSafely(conn, data);
+      const safeSend = createSafeSender(primary, fallback);
+      rejectIncomingConnectionFlow(safeSend, connectionToReject);
       
       // 清理连接状态
       setShowConnectionRequest(false);
@@ -453,7 +436,6 @@ const useConnection = ({
     showConnectionRequest,
     incomingPeerId,
     incomingUseEncryption,
-    encryptionReady,
     useEncryption,
     customIdError,
     targetIdError,

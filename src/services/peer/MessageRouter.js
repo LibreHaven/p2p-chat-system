@@ -1,4 +1,9 @@
 import { encryptionService } from '../encryptionService';
+import { MessageTypes } from '../../shared/messages/envelope';
+/** @typedef {import('../../types/contracts').Envelope} Envelope */
+/** @typedef {import('../../types/contracts').FileMetadataEnvelope} FileMetadataEnvelope */
+/** @typedef {import('../../types/contracts').FileChunkEnvelope} FileChunkEnvelope */
+/** @typedef {import('../../types/contracts').EncryptedMessageEnvelope} EncryptedMessageEnvelope */
 
 const parseJson = (payload) => {
   try {
@@ -26,6 +31,13 @@ const decodeBinaryToText = (data) => {
 };
 
 class MessageRouter {
+  /**
+   * Entry point for routing inbound data frames to message/file handlers.
+   * @param {string|ArrayBuffer|Uint8Array|object} data
+   * @param {boolean} useEncryption
+   * @param {any} sharedSecret
+   * @param {{onMessage?:(msg:any)=>void,onFileMetadata?:(meta:FileMetadataEnvelope)=>void,onFileChunk?:(transferId:string,chunkIndex:number,chunk:ArrayBuffer|Uint8Array, header?:FileChunkEnvelope)=>void,onFileTransferComplete?:(transferId:string)=>void}} [callbacks]
+   */
   async handle(data, useEncryption, sharedSecret, callbacks = {}) {
     const safeCallbacks = ensureCallbacks(callbacks);
 
@@ -47,10 +59,17 @@ class MessageRouter {
     safeCallbacks.onMessage(data);
   }
 
+  /**
+   * Handle string frames which may be plain text or JSON envelope.
+   * @param {string} data
+   * @param {boolean} useEncryption
+   * @param {any} sharedSecret
+   * @param {{onMessage:(msg:any)=>void,onFileMetadata:(meta:FileMetadataEnvelope)=>void,onFileChunk:(transferId:string,chunkIndex:number,chunk:ArrayBuffer|Uint8Array, header?:FileChunkEnvelope)=>void,onFileTransferComplete:(transferId:string)=>void}} callbacks
+   */
   async handleStringData(data, useEncryption, sharedSecret, callbacks) {
     const json = parseJson(data);
     if (!json) {
-      callbacks.onMessage({ type: 'message', content: data, timestamp: Date.now() });
+      callbacks.onMessage({ type: MessageTypes.Message, content: data, timestamp: Date.now() });
       return;
     }
 
@@ -59,12 +78,12 @@ class MessageRouter {
       return;
     }
 
-    if (json.type === 'file-metadata') {
+    if (json.type === MessageTypes.FileMetadata || json.type === 'file-metadata') {
       callbacks.onFileMetadata(json);
       return;
     }
 
-    if (json.type === 'file-chunk') {
+    if (json.type === MessageTypes.FileChunk || json.type === 'file-chunk') {
       await this.handleChunkObject(json, useEncryption, sharedSecret, callbacks);
       return;
     }
@@ -72,6 +91,12 @@ class MessageRouter {
     callbacks.onMessage(json);
   }
 
+  /**
+   * Decrypt and dispatch an encrypted message envelope.
+   * @param {EncryptedMessageEnvelope} payload
+   * @param {any} sharedSecret
+   * @param {{onMessage:(msg:any)=>void,onFileMetadata:(meta:FileMetadataEnvelope)=>void}} callbacks
+   */
   async handleEncryptedMessage(payload, sharedSecret, callbacks) {
     try {
       const decrypted = await encryptionService.decrypt(payload, sharedSecret);
@@ -80,7 +105,7 @@ class MessageRouter {
         return;
       }
       const message = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
-      if (message.type === 'file-metadata') {
+      if (message.type === MessageTypes.FileMetadata || message.type === 'file-metadata') {
         callbacks.onFileMetadata(message);
         return;
       }
@@ -90,6 +115,13 @@ class MessageRouter {
     }
   }
 
+  /**
+   * Handle a file chunk object envelope (encrypted or plain).
+   * @param {FileChunkEnvelope} payload
+   * @param {boolean} useEncryption
+   * @param {any} sharedSecret
+   * @param {{onFileChunk:(transferId:string,chunkIndex:number,chunk:ArrayBuffer|Uint8Array, header?:FileChunkEnvelope)=>void,onFileTransferComplete:(transferId:string)=>void}} callbacks
+   */
   async handleChunkObject(payload, useEncryption, sharedSecret, callbacks) {
     try {
       if (payload.encryptedData && useEncryption && sharedSecret) {
@@ -120,6 +152,11 @@ class MessageRouter {
     }
   }
 
+  /**
+   * Handle binary frames which may contain a JSON header prefix and optional payload.
+   * @param {ArrayBuffer|Uint8Array} data
+   * @param {{onMessage:(msg:any)=>void,onFileChunk:(transferId:string,chunkIndex:number,chunk:ArrayBuffer|Uint8Array, header?:FileChunkEnvelope)=>void,onFileTransferComplete:(transferId:string)=>void}} callbacks
+   */
   handleBinaryData(data, callbacks) {
     const view = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
 
@@ -133,7 +170,7 @@ class MessageRouter {
           const header = JSON.parse(headerText);
           const chunkData = view.slice(4 + headerLength);
 
-          if (header.type === 'file-chunk') {
+          if (header.type === MessageTypes.FileChunk || header.type === 'file-chunk') {
             callbacks.onFileChunk(header.transferId, header.chunkIndex, chunkData, header);
             if (header.isLastChunk) {
               callbacks.onFileTransferComplete(header.transferId);
@@ -176,7 +213,7 @@ class MessageRouter {
       return;
     }
 
-    callbacks.onMessage({ type: 'message', content: decoded, timestamp: Date.now() });
+    callbacks.onMessage({ type: MessageTypes.Message, content: decoded, timestamp: Date.now() });
   }
 }
 

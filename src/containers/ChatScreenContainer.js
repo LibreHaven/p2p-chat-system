@@ -1,4 +1,5 @@
 import React from 'react';
+import useChatSessionStore from '../shared/store/chatSessionStore';
 import useChatSession from '../hooks/useChatSession';
 import ChatScreenUI from '../components/ui/ChatScreenUI';
 
@@ -13,14 +14,7 @@ const ChatScreenContainer = ({
     // Message state
     message,
     messages,
-    
-    // Encryption state
-    encryptionReady,
-    encryptionStatus,
-    
-    // Connection state
-    connectionLost,
-    reconnecting,
+    // 其余状态改由全局 Store 读取，避免重复传递
     
     // File state
     selectedFile,
@@ -31,7 +25,7 @@ const ChatScreenContainer = ({
     
     // Actions
     sendMessage,
-    reconnectToPeer,
+    attemptReconnect,
     handleFileSelect,
     clearSelectedFile,
     sendFile,
@@ -47,9 +41,12 @@ const ChatScreenContainer = ({
     onNavigateBack: onNavigateBack // 使用传入的回调函数
   });
   
-  // 获取最终的加密设置（优先使用sessionStorage中的值）
-  const sessionUseEncryption = sessionStorage.getItem('useEncryption');
-  const finalUseEncryption = sessionUseEncryption !== null ? sessionUseEncryption === 'true' : useEncryption;
+  // 从全局 Store 读取会话关键状态（由 hooks 同步写入）
+  const encryptionReady = useChatSessionStore((s) => s.encryptionReady);
+  const encryptionStatus = useChatSessionStore((s) => s.encryptionStatus);
+  const connectionLost = useChatSessionStore((s) => s.connectionLost);
+  const reconnecting = useChatSessionStore((s) => s.reconnecting);
+  const finalUseEncryption = useChatSessionStore((s) => s.finalUseEncryption);
   
   // Event handlers
   const handleMessageChange = (newMessage) => {
@@ -58,7 +55,8 @@ const ChatScreenContainer = ({
   
   const handleSendMessage = () => {
     if (message.trim()) {
-      sendMessage(message);
+      // useChatSession 暴露为闭包，无需参数
+      sendMessage();
     }
   };
   
@@ -70,7 +68,7 @@ const ChatScreenContainer = ({
   };
   
   const handleReconnect = () => {
-    reconnectToPeer();
+    attemptReconnect();
   };
   
   const handleFileSelectWrapper = (file) => {
@@ -98,8 +96,8 @@ const ChatScreenContainer = ({
       encryptionStatus={encryptionStatus}
       connectionLost={connectionLost}
       reconnecting={reconnecting}
-      isEncryptionEnabled={finalUseEncryption && encryptionReady}
-      useEncryption={finalUseEncryption}
+  isEncryptionEnabled={finalUseEncryption && encryptionReady}
+  useEncryption={finalUseEncryption}
       
       // File props
       selectedFile={selectedFile}

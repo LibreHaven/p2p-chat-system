@@ -1,8 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React from 'react';
 import styled from 'styled-components';
 import { FiSend } from 'react-icons/fi';
 import { Input as AntInput, Button as AntButton } from 'antd';
-import { utils } from '../utils';
 
 const Container = styled.div`
   display: flex;

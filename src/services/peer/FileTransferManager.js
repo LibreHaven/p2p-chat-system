@@ -1,15 +1,47 @@
 import { encryptionService } from '../encryptionService';
-
-const CHUNK_SIZE = 16 * 1024; // 16KB
+import { EnvelopeVersion, MessageTypes } from '../../shared/messages/envelope';
+/** @typedef {import('../../types/contracts').FileMetadataEnvelope} FileMetadataEnvelope */
+/** @typedef {import('../../types/contracts').FileChunkEnvelope} FileChunkEnvelope */
+/** @typedef {import('../../types/contracts').EncryptedBinaryEnvelope} EncryptedBinaryEnvelope */
+/** @typedef {import('../../types/contracts').SafeSend} SafeSend */
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// 默认的 metadata 生成策略，保持与历史一致
+function defaultBuildMetadata({ transferId, file, fileSize, chunksCount }) {
+  return {
+    v: EnvelopeVersion,
+    type: MessageTypes.FileMetadata,
+    transferId,
+    fileName: file.name,
+    fileType: file.type,
+    fileSize,
+    chunksCount,
+    timestamp: Date.now(),
+  };
+}
+
 class FileTransferManager {
-  constructor(sendMessageSafely) {
+  /**
+   * @param {SafeSend} sendMessageSafely
+   * @param {{ chunkSize?: number, paceMs?: number, buildMetadata?: (args:{transferId:string,file:File,fileSize:number,chunksCount:number})=>FileMetadataEnvelope }} [options]
+   */
+  constructor(sendMessageSafely, options = {}) {
     this.sendMessageSafely = sendMessageSafely;
     this.transfers = {};
+    // 策略配置（向后兼容默认值）
+    this.chunkSize = typeof options.chunkSize === 'number' && options.chunkSize > 0 ? options.chunkSize : 16 * 1024;
+    this.paceMs = typeof options.paceMs === 'number' && options.paceMs >= 0 ? options.paceMs : 50;
+    this.buildMetadata = typeof options.buildMetadata === 'function' ? options.buildMetadata : defaultBuildMetadata;
   }
 
+  /**
+   * @param {any} connection
+   * @param {File} file
+   * @param {boolean} useEncryption
+   * @param {any} sharedSecret
+   * @param {{onProgress?:(id:string,progress:number)=>void,onComplete?:(id:string)=>void,onError?:(err:Error)=>void}} [callbacks]
+   */
   async sendFile(connection, file, useEncryption, sharedSecret, callbacks = {}) {
     if (!connection || !file) {
       callbacks.onError?.(new Error('连接或文件不存在'));
@@ -30,18 +62,9 @@ class FileTransferManager {
     reader.onload = async (event) => {
       try {
         const fileData = new Uint8Array(event.target.result);
-        const totalChunks = Math.ceil(fileData.length / CHUNK_SIZE);
+        const totalChunks = Math.ceil(fileData.length / this.chunkSize);
         this.transfers[transferId].totalChunks = totalChunks;
-
-        const metadata = {
-          type: 'file-metadata',
-          transferId,
-          fileName: file.name,
-          fileType: file.type,
-          fileSize: fileData.length,
-          chunksCount: totalChunks,
-          timestamp: Date.now(),
-        };
+        const metadata = this.buildMetadata({ transferId, file, fileSize: fileData.length, chunksCount: totalChunks });
         const metadataStr = JSON.stringify(metadata);
 
         if (useEncryption && sharedSecret) {
@@ -52,11 +75,11 @@ class FileTransferManager {
         }
 
         for (let index = 0; index < totalChunks; index += 1) {
-          const start = index * CHUNK_SIZE;
-          const end = Math.min(start + CHUNK_SIZE, fileData.length);
+          const start = index * this.chunkSize;
+          const end = Math.min(start + this.chunkSize, fileData.length);
           const chunk = fileData.slice(start, end);
           await this.sendFileChunk(connection, transferId, index, chunk, useEncryption, sharedSecret);
-          await sleep(50);
+          await sleep(this.paceMs);
         }
       } catch (error) {
         console.error('处理文件失败:', error);
@@ -74,6 +97,14 @@ class FileTransferManager {
     reader.readAsArrayBuffer(file);
   }
 
+  /**
+   * @param {any} connection
+   * @param {string} transferId
+   * @param {number} chunkIndex
+   * @param {ArrayBuffer|Uint8Array} chunkData
+   * @param {boolean} useEncryption
+   * @param {any} sharedSecret
+   */
   async sendFileChunk(connection, transferId, chunkIndex, chunkData, useEncryption, sharedSecret) {
     const transfer = this.transfers[transferId];
     if (!transfer) {
@@ -83,7 +114,8 @@ class FileTransferManager {
 
     try {
       const envelope = {
-        type: 'file-chunk',
+        v: EnvelopeVersion,
+        type: MessageTypes.FileChunk,
         transferId,
         chunkIndex,
         isLastChunk: chunkIndex === transfer.totalChunks - 1,
@@ -122,12 +154,17 @@ class FileTransferManager {
   }
 
   arrayBufferToBase64(buffer) {
+    // Prefer shared utils to avoid direct window dependency in non-browser envs (tests/SSR)
+    if (encryptionService?.utils?.arrayBufferToBase64) {
+      return encryptionService.utils.arrayBufferToBase64(buffer);
+    }
     let binary = '';
     const bytes = new Uint8Array(buffer);
     for (let i = 0; i < bytes.byteLength; i += 1) {
       binary += String.fromCharCode(bytes[i]);
     }
-    return window.btoa(binary);
+    // Fallback: window.btoa (browser only)
+    return typeof window !== 'undefined' && window.btoa ? window.btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
   }
 }
 
