@@ -1,10 +1,11 @@
 import { useCallback, useRef } from 'react';
 import peerService from '../../services/peerService';
+import { config } from '../../config';
 
-const HEARTBEAT_INTERVAL = 10000;
-const HEARTBEAT_TIMEOUT = 30000;
+const HEARTBEAT_INTERVAL = config?.peerConfig?.pingInterval ?? 10000;
+const HEARTBEAT_TIMEOUT = config?.peerConfig?.heartbeatTimeout ?? 30000;
 
-export default function useHeartbeatMonitor({ connectionRef, onTimeout }) {
+export default function useHeartbeatMonitor({ connectionRef, onTimeout, sendPayload }) {
   const heartbeatIntervalRef = useRef(null);
   const lastHeartbeatAtRef = useRef(Date.now());
 
@@ -20,11 +21,16 @@ export default function useHeartbeatMonitor({ connectionRef, onTimeout }) {
     if (!connection) {
       return;
     }
-    peerService.sendMessageSafely(connection, {
+    const payload = {
       type: 'heartbeat',
       timestamp: Date.now(),
-    });
-  }, [connectionRef]);
+    };
+    if (typeof sendPayload === 'function') {
+      sendPayload(connection, payload);
+    } else {
+      peerService.sendMessageSafely(connection, payload);
+    }
+  }, [connectionRef, sendPayload]);
 
   const startHeartbeat = useCallback(() => {
     stopHeartbeat();

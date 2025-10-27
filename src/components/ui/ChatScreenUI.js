@@ -1,10 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import styled from 'styled-components';
 import { FiSend, FiLoader, FiRefreshCw, FiFile, FiImage, FiVideo, FiX } from 'react-icons/fi';
-import { Button as AntButton, Input as AntInput, Upload, Badge, Tooltip, Typography } from 'antd';
-
-const { TextArea } = AntInput;
-const { Text } = Typography;
+import { Button as AntButton, Input as AntInput, Tooltip } from 'antd';
 
 // Styled Ant Design components for chat interface
 const StyledChatInput = styled(AntInput)`
@@ -215,14 +212,15 @@ const InputContainer = styled.div`
   margin-top: 10px;
 `;
 
-const MessageInput = styled.input`
+// 移除未使用的 MessageInput（使用 StyledChatInput 代替）
+/* const MessageInput = styled.input`
   flex: 1;
   padding: 10px;
   border: 1px solid #ddd;
   border-radius: 4px;
   font-size: 16px;
   margin-right: 10px;
-`;
+`; */
 
 const SendButton = styled.button`
   padding: 10px 20px;
@@ -244,7 +242,8 @@ const SendButton = styled.button`
   }
 `;
 
-const ReconnectButton = styled.button`
+// 移除未使用的 ReconnectButton（使用 StyledReconnectButton 代替）
+/* const ReconnectButton = styled.button`
   padding: 10px 20px;
   background-color: #f39c12;
   color: white;
@@ -259,7 +258,7 @@ const ReconnectButton = styled.button`
   &:hover {
     background-color: #e67e22;
   }
-`;
+`; */
 
 const ConnectionStatusMessage = styled.div`
   padding: 10px;
@@ -279,7 +278,8 @@ const FileInputContainer = styled.div`
   gap: 10px;
 `;
 
-const FileButton = styled.button`
+// 移除未使用的 FileButton（已使用 StyledFileButton）
+/* const FileButton = styled.button`
   padding: 8px;
   background-color: #f8f9fa;
   border: 1px solid #dee2e6;
@@ -296,7 +296,7 @@ const FileButton = styled.button`
     color: #6c757d;
     cursor: not-allowed;
   }
-`;
+`; */
 
 const HiddenFileInput = styled.input`
   display: none;
@@ -350,7 +350,7 @@ const FilePreviewContent = styled.div`
 
 const ChatScreenUI = ({
   // Basic props
-  peerId,
+  peerId: _peerId,
   targetId,
   message,
   messages,

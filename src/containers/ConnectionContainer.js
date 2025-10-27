@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useCallback } from 'react';
+import useChatSessionStore from '../shared/store/chatSessionStore';
 import useConnection from '../hooks/useConnection';
 import ConnectionScreenUI from '../components/ui/ConnectionScreenUI';
 
@@ -11,7 +12,8 @@ const ConnectionContainer = ({
   // 移除重复的 targetId 和 useEncryption 状态声明
   // const [targetId, setTargetId] = useState(''); // 删除这行
   // const [useEncryption, setUseEncryption] = useState(true); // 删除这行，使用 hook 的状态
-  const [messages, setMessages] = useState([]);
+  // 提供一个清空消息的占位回调给 hook，用于卸载时清理；当前容器不直接使用消息列表
+  const setMessages = useCallback(() => {}, []);
   
   const {
     // Connection state
@@ -49,6 +51,9 @@ const ConnectionContainer = ({
       onConnectionError(error);
     }
   });
+
+  // 从全局 Store 读取最终协商的加密状态，仅用于展示（不影响发起前开关）
+  const finalUseEncryption = useChatSessionStore((s) => s.finalUseEncryption);
   
   // Event handlers
   const handleGenerateRandomId = () => {
@@ -100,6 +105,7 @@ const ConnectionContainer = ({
       showConnectionRequest={showConnectionRequest}
       incomingPeerId={incomingPeerId}
       incomingUseEncryption={incomingUseEncryption}
+  finalUseEncryption={finalUseEncryption}
       
       // Error state
       customIdError={customIdError}

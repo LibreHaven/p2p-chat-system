@@ -39,7 +39,7 @@ const MessageTime = styled.span`
 `;
 
 // 使用memo优化消息气泡组件
-const MessageBubble = memo(({ message, isOwn }) => {
+const MessageBubbleBase = ({ message, isOwn }) => {
   // 格式化时间戳
   const formatTime = (timestamp) => {
     const date = new Date(timestamp);
@@ -47,13 +47,16 @@ const MessageBubble = memo(({ message, isOwn }) => {
   };
 
   return (
-    <StyledCard $isSelf={isSelf} size="small" bordered={false}>
+    <StyledCard $isSelf={isOwn} size="small" bordered={false}>
       <Text style={{ fontSize: '15px', color: '#303030', whiteSpace: 'pre-wrap' }}>
         {message.text}
       </Text>
       <MessageTime>{formatTime(message.timestamp)}</MessageTime>
     </StyledCard>
   );
-});
+};
+
+const MessageBubble = memo(MessageBubbleBase);
+MessageBubble.displayName = 'MessageBubble';
 
 export default MessageBubble;

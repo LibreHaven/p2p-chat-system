@@ -32,11 +32,34 @@ export const config = {
   // PeerJS配置
   peerConfig: {
     debug: process.env.NODE_ENV === 'development' ? 2 : 0,
-    // 连接超时设置
-    pingInterval: 5000,
-    // 重试配置
+    // 心跳与超时（可被 Hook 使用）
+    pingInterval: 10000, // 心跳发送间隔（ms）
+    heartbeatTimeout: 30000, // 心跳超时（ms）
+    // 重试配置（连接层）
     maxRetries: 3,
-    retryDelay: 2000
+    retryDelay: 2000,
+    // 重连退避参数（会话层）
+    reconnectBackoff: {
+      baseMs: 1000,
+      factor: 2,
+      maxMs: 30000,
+    },
+  },
+
+  // 功能灰度开关（便于逐步接入与回退）
+  features: {
+    // 文件发送在服务层编排（默认开启，可回退）
+    fileSendOrchestrated: true,
+    // 文件接收服务化（默认开启，可回退）
+    fileReceiveService: true,
+  },
+
+  // 安全与协商策略
+  security: {
+    // 加密协商策略：
+    // - 'both'  : 只有双方都勾选才启用（当前默认，保持兼容）
+    // - 'either': 任意一方勾选即启用（更贴合“我开启就希望加密”的直觉）
+    encryptionNegotiation: 'both',
   }
 };
 

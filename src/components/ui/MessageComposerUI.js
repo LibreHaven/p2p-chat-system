@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import styled from 'styled-components';
 import { FiSend, FiFile, FiImage, FiVideo } from 'react-icons/fi';
 import { Button as AntButton, Input as AntInput, Tooltip } from 'antd';
@@ -77,82 +77,13 @@ const InputContainer = styled.div`
   margin-top: 10px;
 `;
 
-const MessageInput = styled.input`
-  flex: 1;
-  padding: 12px 15px;
-  border: 1px solid #ddd;
-  border-radius: 20px;
-  font-size: 16px;
-  outline: none;
-  transition: border-color 0.3s;
-  
-  &:focus {
-    border-color: #4a90e2;
-    box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
-  }
-  
-  &:disabled {
-    background-color: #f5f5f5;
-    cursor: not-allowed;
-  }
-`;
-
-const SendButton = styled.button`
-  background-color: #4a90e2;
-  color: white;
-  border: none;
-  border-radius: 50%;
-  width: 46px;
-  height: 46px;
-  margin-left: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-  
-  &:hover {
-    background-color: #3a80d2;
-    transform: scale(1.05);
-  }
-  
-  &:active {
-    transform: scale(0.95);
-  }
-  
-  &:disabled {
-    background-color: #cccccc;
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
-  }
-`;
 
 const FileInputContainer = styled.div`
   display: flex;
   margin-bottom: 10px;
 `;
 
-const FileButton = styled.button`
-  padding: 10px;
-  background-color: #3498db;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  margin-right: 5px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  &:hover {
-    background-color: #2980b9;
-  }
-  &:disabled {
-    background-color: #cccccc;
-    cursor: not-allowed;
-  }
-`;
+// 移除未使用的旧版样式组件（MessageInput/SendButton/FileButton），统一使用 Styled* 版本
 
 const HiddenFileInput = styled.input`
   display: none;

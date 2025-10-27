@@ -3,7 +3,7 @@ import styled from 'styled-components';
 import { FiAlertTriangle, FiRefreshCw, FiArrowLeft } from 'react-icons/fi';
 import { Alert, Button as AntButton, Card as AntCard, Typography } from 'antd';
 
-const { Title, Paragraph } = Typography;
+const { Title } = Typography;
 
 const ErrorContainer = styled.div`
   display: flex;

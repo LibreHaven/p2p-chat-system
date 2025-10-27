@@ -202,6 +202,7 @@ const ConnectionScreenUI = ({
     showConnectionRequest,
     incomingPeerId,
     incomingUseEncryption,
+    finalUseEncryption,
     customIdError,
     targetIdError,
     useEncryption,
@@ -322,6 +323,14 @@ const ConnectionScreenUI = ({
                     <span>{useEncryption ? '已启用' : '已禁用'}</span>
                 </div>
             </EncryptionToggle>
+            {typeof finalUseEncryption === 'boolean' && (
+                <div style={{ marginTop: '-10px', marginBottom: '10px', fontSize: 12, color: '#666' }}>
+                    最终协商的加密状态：
+                    <Text type={finalUseEncryption ? 'success' : 'warning'}>
+                        {finalUseEncryption ? '已启用' : '已禁用'}
+                    </Text>
+                </div>
+            )}
 
             <InputGroup>
                 <Label>连接到对方</Label>
@@ -377,7 +386,7 @@ const ConnectionScreenUI = ({
                 disabled={!groupName}
                 icon={<FiPlus />}
             >
-                创建群T组
+                创建群组
             </StyledButton>
         </StyledCard>
     );

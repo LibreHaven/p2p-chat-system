@@ -34,17 +34,7 @@ const FilePreviewContent = styled.div`
   margin-bottom: 10px;
 `;
 
-const FilePreviewText = styled.div`
-  font-size: 14px;
-  color: #666;
-  padding: 10px;
-  background-color: #f8f9fa;
-  border-radius: 4px;
-  max-height: 200px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  font-family: 'Courier New', monospace;
-`;
+// 移除未使用的 FilePreviewText
 
 const FilePreviewInfo = styled.div`
   font-size: 14px;

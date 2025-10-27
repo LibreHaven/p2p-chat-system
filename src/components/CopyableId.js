@@ -15,44 +15,7 @@ const Container = styled.div`
   border: 1px dashed #ccc;
 `;
 
-const IdText = styled.span`
-  flex: 1;
-  font-family: monospace;
-  font-size: 16px;
-  user-select: all;
-`;
-
-const CopyButton = styled.button`
-  background: none;
-  border: none;
-  color: #4a90e2;
-  cursor: pointer;
-  font-size: 20px;
-  transition: all 0.2s ease;
-  
-  &:hover {
-    color: #2a70c2;
-    transform: scale(1.1);
-  }
-  
-  &:active {
-    transform: scale(0.95);
-  }
-`;
-
-const CopyNotification = styled.div`
-  position: absolute;
-  top: -30px;
-  left: 50%;
-  transform: translateX(-50%);
-  background-color: rgba(0, 0, 0, 0.7);
-  color: white;
-  padding: 5px 10px;
-  border-radius: 4px;
-  font-size: 12px;
-  opacity: ${props => props.$visible ? 1 : 0};
-  transition: opacity 0.3s ease;
-`;
+// 移除未使用的样式组件，保留 Container 和内置 antd 的拷贝能力
 
 const CopyableId = ({ id, onCopy }) => {
   const handleCopy = () => {
